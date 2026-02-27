@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.env
+migration-state.json
+config.json
+*.js.map

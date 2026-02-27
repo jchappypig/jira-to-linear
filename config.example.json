@@ -1,0 +1,24 @@
+{
+  "jql": "project = ENG AND 'Epic Link' = ENG-123 AND assignee in membersOf('your-team')",
+  "teamMapping": {
+    "Backend Team": "Backend",
+    "Frontend Team": "Frontend",
+    "Platform": "Infra"
+  },
+  "issueTypeMapping": {
+    "Bug":      { "linearLabel": "Bug",      "labelColor": "#e11d48" },
+    "Story":    { "linearLabel": "Story",    "labelColor": "#7c3aed" },
+    "Task":     { "linearLabel": "Task",     "labelColor": "#0284c7" },
+    "Incident": { "linearLabel": "Incident", "labelColor": "#dc2626" },
+    "Epic":     { "linearLabel": "Epic",     "labelColor": "#059669" }
+  },
+  "stateMigration": {
+    "To Do":       "Backlog",
+    "In Progress": "In Progress",
+    "In Review":   "In Review",
+    "Done":        "Done",
+    "Blocked":     "In Progress"
+  },
+  "batchSize": 10,
+  "rateLimitDelayMs": 500
+}
