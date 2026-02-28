@@ -168,10 +168,12 @@ async function runMigration(opts: CliOptions): Promise<void> {
         }
       }
 
-      // If no cycle and status maps to Backlog, use Todo instead
+      // If not in an active sprint and status maps to Backlog, use Todo instead
       const mappedStateName = config.stateMigration?.[mapped.jiraStatusName] ?? mapped.jiraStatusName;
+      const sprints = jiraIssue.fields.customfield_10020 ?? [];
+      const inActiveSprint = sprints.some((s) => s.state === "active");
       const effectiveStateName =
-        !mapped.cycleId && mappedStateName === "Backlog" ? "Todo" : mappedStateName;
+        !inActiveSprint && mappedStateName === "Backlog" ? "Todo" : mappedStateName;
       const stateId = linearClient.resolveStateId(effectiveStateName, teamId);
 
       if (opts.dryRun) {
