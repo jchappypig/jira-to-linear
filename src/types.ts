@@ -162,6 +162,7 @@ export interface MappedIssue {
   reporterName: string;
   reporterEmail?: string;
   jiraStatusName: string;
+  skipMigration?: boolean;
 }
 
 // ============================================================

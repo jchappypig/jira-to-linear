@@ -39,7 +39,8 @@ export class LinearMigrationClient {
   private labels = new Map<string, LinearLabelInfo>();        // key: "teamId:lowercasedName" or "ws:name"
   private users = new Map<string, LinearUserInfo>();          // key: lowercased email
   private states = new Map<string, LinearStateInfo>();        // key: "teamId:lowercasedName"
-  private cycles = new Map<string, string>();                 // key: "teamId:cycleName" → cycleId
+  private cycles = new Map<string, string>();                 // key: cycleName → cycleId (root team only)
+  private rootTeamId: string | undefined;                     // Indebted-rd root team ID
 
   constructor(apiKey: string) {
     this.client = new LinearClient({ apiKey });
@@ -51,8 +52,8 @@ export class LinearMigrationClient {
     return { id: viewer.id, name: viewer.displayName, email: viewer.email };
   }
 
-  /** Load all workspace teams into cache */
-  async loadTeams(): Promise<void> {
+  /** Load all workspace teams into cache and identify the root team (cycle owner) */
+  async loadTeams(rootTeamName = "Indebted-rd"): Promise<void> {
     const result = await this.client.teams({ first: 250 });
     for (const team of result.nodes) {
       this.teams.set(team.name.toLowerCase(), {
@@ -60,6 +61,10 @@ export class LinearMigrationClient {
         name: team.name,
         key: team.key,
       });
+    }
+    this.rootTeamId = this.teams.get(rootTeamName.toLowerCase())?.id;
+    if (!this.rootTeamId) {
+      console.warn(`WARN: Root team "${rootTeamName}" not found — cycle creation will be skipped.`);
     }
   }
 
@@ -196,9 +201,16 @@ export class LinearMigrationClient {
   }
 
   /**
-   * Find or create a Linear cycle for a Jira sprint on the given team.
+   * Find or create a Linear cycle for a Jira sprint.
+   * Cycles are created on the root team (Indebted-rd) and inherited by sub-teams.
+   * Each sub-team has its own cycle ID for the inherited cycle, so we look up
+   * the cycle ID from the sub-team by name after ensuring it exists on the root team.
    * Sprint names are normalized to "FYXXSXX" format.
-   * Cycles are scoped per team since Linear requires cycle and issue to be on the same team.
+   */
+  /**
+   * Find or create a Linear cycle for a Jira sprint.
+   * Cycles are always created on the root team (Indebted-rd) and inherited by sub-teams.
+   * Returns the sub-team's inherited cycle ID, or throws if the cycle is completed in Linear.
    */
   async resolveOrCreateCycle(
     teamId: string,
@@ -208,34 +220,64 @@ export class LinearMigrationClient {
   ): Promise<string> {
     const cycleName = LinearMigrationClient.normalizeCycleName(sprintName);
     if (!cycleName) throw new Error(`Cannot normalize sprint name: "${sprintName}"`);
+    if (!this.rootTeamId) throw new Error("Root team not loaded — call loadTeams() first.");
 
     const cacheKey = `${teamId}:${cycleName}`;
     const cached = this.cycles.get(cacheKey);
     if (cached) return cached;
 
-    // Check existing cycles on this team
-    const team = await this.client.team(teamId);
-    const existing = await team.cycles({ first: 250 });
-    for (const cycle of existing.nodes) {
-      if (cycle.name?.toLowerCase() === cycleName.toLowerCase()) {
-        this.cycles.set(cacheKey, cycle.id);
-        return cycle.id;
+    // Ensure the cycle exists on the root team (create if missing)
+    const rootTeam = await this.client.team(this.rootTeamId);
+    const rootCycles = await rootTeam.cycles({ first: 250 });
+    const existsOnRoot = rootCycles.nodes.some(
+      (c) => c.name?.toLowerCase() === cycleName.toLowerCase()
+    );
+    if (!existsOnRoot) {
+      const payload = await this.client.createCycle({
+        teamId: this.rootTeamId,
+        name: cycleName,
+        startsAt: new Date(startDate),
+        endsAt: new Date(endDate),
+      });
+      if (!payload.success || !payload.cycle) {
+        throw new Error(`Failed to create cycle "${cycleName}" on root team`);
       }
     }
 
-    // Create a new cycle on this team
-    const payload = await this.client.createCycle({
-      teamId,
-      name: cycleName,
-      startsAt: new Date(startDate),
-      endsAt: new Date(endDate),
-    });
-    if (!payload.success || !payload.cycle) {
-      throw new Error(`Failed to create cycle "${cycleName}"`);
+    // Look up the inherited cycle ID from the sub-team (Linear uses different IDs per team)
+    const subTeam = await this.client.team(teamId);
+    const subCycles = await subTeam.cycles({ first: 250 });
+    for (const cycle of subCycles.nodes) {
+      if (cycle.name?.toLowerCase() !== cycleName.toLowerCase()) continue;
+      if (cycle.completedAt) continue; // skip old completed duplicate with same name
+      this.cycles.set(cacheKey, cycle.id);
+      return cycle.id;
     }
-    const cycle = await payload.cycle;
-    this.cycles.set(cacheKey, cycle.id);
-    return cycle.id;
+
+    throw new Error(`Cycle "${cycleName}" is already completed in Linear`);
+  }
+
+  /** Return the active cycle ID for a team. Trusts Linear's own activeCycle field completely. */
+  async getActiveCycleId(teamId: string): Promise<string | undefined> {
+    const team = await this.client.team(teamId);
+    const activeCycle = await team.activeCycle;
+    return activeCycle?.id;
+  }
+
+  /** Return the next upcoming cycle ID (soonest future start), or undefined if none. */
+  async getNextCycleId(teamId: string): Promise<string | undefined> {
+    const team = await this.client.team(teamId);
+    const cycles = await team.cycles({ first: 250 });
+    const now = new Date();
+    let next: { id: string; startsAt: Date } | undefined;
+    for (const cycle of cycles.nodes) {
+      if (!cycle.startsAt || !cycle.endsAt || cycle.completedAt) continue;
+      const startsAt = new Date(cycle.startsAt);
+      if (startsAt > now) {
+        if (!next || startsAt < next.startsAt) next = { id: cycle.id, startsAt };
+      }
+    }
+    return next?.id;
   }
 
   /**

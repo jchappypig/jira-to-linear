@@ -41,22 +41,31 @@ export class IssueMapper {
     }
 
     // Resolve Jira sprint (customfield_10020) → Linear cycle ID
-    // Only assign active or future sprints — closed sprints are skipped because
-    // Linear teams with cycleLockToActive=true reject assignment to past cycles.
+    // - Closed sprint + issue done → skip migration entirely
+    // - Closed sprint + issue not done → active Linear cycle (carry forward)
+    // - Active/future sprint → find/create matching Linear cycle;
+    //   if that cycle is completed in Linear → fall back to active Linear cycle
+    // - No sprint → no cycle
     let cycleId: string | undefined;
     const sprints = fields.customfield_10020;
+    const isDone = ["Done", "Closed", "Resolved", "Released"].includes(fields.status.name);
     if (sprints && sprints.length > 0) {
       const sprint = sprints[sprints.length - 1];
-      if (sprint.startDate && sprint.endDate && sprint.state !== "closed") {
+      if (sprint.state === "closed") {
+        if (isDone) {
+          return { ...({} as MappedIssue), skipMigration: true };
+        }
+        cycleId = await this.linearClient.getActiveCycleId(teamId)
+          ?? await this.linearClient.getNextCycleId(teamId);
+      } else if (sprint.startDate && sprint.endDate) {
         try {
           cycleId = await this.linearClient.resolveOrCreateCycle(
-            teamId,
-            sprint.name,
-            sprint.startDate,
-            sprint.endDate
+            teamId, sprint.name, sprint.startDate, sprint.endDate
           );
         } catch (err) {
-          console.warn(`WARN: Could not resolve cycle for sprint "${sprint.name}": ${err instanceof Error ? err.message : err}`);
+          console.warn(`WARN: Sprint "${sprint.name}" cycle completed in Linear, moving to active cycle`);
+          cycleId = await this.linearClient.getActiveCycleId(teamId)
+            ?? await this.linearClient.getNextCycleId(teamId);
         }
       }
     }

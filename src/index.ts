@@ -157,6 +157,12 @@ async function runMigration(opts: CliOptions): Promise<void> {
     try {
       const mapped = await mapper.mapIssue(jiraIssue, teamId);
 
+      if (mapped.skipMigration) {
+        console.log(`SKIP (done in closed sprint): ${key}`);
+        skipped++;
+        continue;
+      }
+
       // Look up the Linear ID of the parent (must have been migrated already due to sort order)
       let parentId: string | undefined;
       if (mapped.parentJiraKey) {
@@ -168,12 +174,12 @@ async function runMigration(opts: CliOptions): Promise<void> {
         }
       }
 
-      // If not in an active sprint and status maps to Backlog, use Todo instead
+      // If a cycle is assigned, Linear requires the issue not be in Backlog state
+      // (cycleLockToActive silently ignores cycleId for Backlog issues).
+      // So promote Backlog → Todo whenever a cycle is assigned.
       const mappedStateName = config.stateMigration?.[mapped.jiraStatusName] ?? mapped.jiraStatusName;
-      const sprints = jiraIssue.fields.customfield_10020 ?? [];
-      const inActiveSprint = sprints.some((s) => s.state === "active");
       const effectiveStateName =
-        !inActiveSprint && mappedStateName === "Backlog" ? "Todo" : mappedStateName;
+        mapped.cycleId && mappedStateName === "Backlog" ? "Todo" : mappedStateName;
       const stateId = linearClient.resolveStateId(effectiveStateName, teamId);
 
       if (opts.dryRun) {
