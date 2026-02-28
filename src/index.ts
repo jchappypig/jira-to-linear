@@ -5,6 +5,7 @@ import { program } from "commander";
 import * as fs from "fs";
 import * as path from "path";
 import { AppConfig, CliOptions, MigrationState } from "./types";
+import { convertAdfToMarkdown } from "./adf-to-markdown";
 import { JiraClient } from "./jira";
 import { LinearMigrationClient } from "./linear";
 import { IssueMapper, sortIssuesByHierarchy } from "./mapper";
@@ -40,10 +41,9 @@ function sleep(ms: number): Promise<void> {
 async function runMigration(opts: CliOptions): Promise<void> {
   const config = loadConfig(opts.configPath);
   const state = loadState(opts.statePath);
-  const jql = opts.jql ?? config.jql;
 
-  if (!jql) {
-    throw new Error("JQL query is required. Provide it via --jql or set jql in config.json.");
+  if (!opts.expand && !opts.jql && !config.jql) {
+    throw new Error("Provide --expand <issueKey>, --jql <query>, or set jql in config.json.");
   }
 
   // Validate required environment variables
@@ -71,9 +71,18 @@ async function runMigration(opts: CliOptions): Promise<void> {
   await linearClient.loadUsers();
 
   // Fetch matching Jira issues
-  console.log(`Fetching Jira issues with JQL: ${jql}`);
-  const jiraIssues = await jiraClient.fetchIssues(jql);
-  console.log(`Found ${jiraIssues.length} Jira issues`);
+  let jiraIssues;
+  if (opts.expand) {
+    const seedKey = opts.expand.toUpperCase().trim();
+    console.log(`Expanding issue graph from seed: ${seedKey}`);
+    jiraIssues = await jiraClient.expandIssueGraph(seedKey, opts.verbose);
+    console.log(`Discovered ${jiraIssues.length} issues in the ${seedKey} graph`);
+  } else {
+    const jql = opts.jql ?? config.jql!;
+    console.log(`Fetching Jira issues with JQL: ${jql}`);
+    jiraIssues = await jiraClient.fetchIssues(jql);
+    console.log(`Found ${jiraIssues.length} Jira issues`);
+  }
 
   if (jiraIssues.length === 0) {
     console.log("No issues to migrate.");
@@ -86,7 +95,13 @@ async function runMigration(opts: CliOptions): Promise<void> {
   // Collect all target Linear team IDs for label/state pre-loading
   const teamIds = new Set<string>();
   for (const issue of sorted) {
-    const teamId = linearClient.resolveTeamId(issue.fields.project.name, config.teamMapping);
+    const jiraTeamName =
+      issue.fields.customfield_10001?.name ?? issue.fields.project.name;
+    const teamId =
+      linearClient.resolveTeamId(jiraTeamName, config.teamMapping) ??
+      (config.defaultTeamName
+        ? linearClient.resolveTeamId(config.defaultTeamName, {})
+        : undefined);
     if (teamId) teamIds.add(teamId);
   }
 
@@ -119,14 +134,19 @@ async function runMigration(opts: CliOptions): Promise<void> {
       continue;
     }
 
-    // Resolve team
-    const teamId = linearClient.resolveTeamId(
-      jiraIssue.fields.project.name,
-      config.teamMapping
-    );
+    // Resolve team: use the Jira team field (customfield_10001) if present,
+    // otherwise fall back to the project name, then defaultTeamName
+    const jiraTeamName =
+      jiraIssue.fields.customfield_10001?.name ??
+      jiraIssue.fields.project.name;
+    const teamId =
+      linearClient.resolveTeamId(jiraTeamName, config.teamMapping) ??
+      (config.defaultTeamName
+        ? linearClient.resolveTeamId(config.defaultTeamName, {})
+        : undefined);
 
     if (!teamId) {
-      const msg = `No Linear team mapping for Jira project "${jiraIssue.fields.project.name}"`;
+      const msg = `No Linear team mapping for Jira team/project "${jiraTeamName}"`;
       console.warn(`WARN: ${msg} — skipping ${key}`);
       state.failed[key] = msg;
       saveState(opts.statePath, state);
@@ -196,6 +216,21 @@ async function runMigration(opts: CliOptions): Promise<void> {
       await linearClient.createComment(created.id, commentBody);
       await sleep(rateLimitMs);
 
+      // Migrate existing Jira comments
+      const jiraComments = jiraIssue.fields.comment?.comments ?? [];
+      for (const jiraComment of jiraComments) {
+        const commentText = convertAdfToMarkdown(jiraComment.body);
+        if (!commentText.trim()) continue;
+        const date = new Date(jiraComment.created).toISOString().split("T")[0];
+        const authorName = jiraComment.author.displayName;
+        const authorEmail = jiraComment.author.emailAddress
+          ? ` (${jiraComment.author.emailAddress})`
+          : "";
+        const body = `**${authorName}${authorEmail}** on ${date}:\n\n${commentText}`;
+        await linearClient.createComment(created.id, body);
+        await sleep(rateLimitMs);
+      }
+
       // Persist the mapping so child issues and re-runs can reference it
       state.jiraKeyToLinearId[key] = created.id;
       state.jiraKeyToLinearIdentifier[key] = created.identifier;
@@ -243,6 +278,7 @@ program
   .description("Migrate Jira Cloud issues to Linear")
   .version("1.0.0")
   .option("-j, --jql <query>", "JQL query to select Jira issues (overrides config.jql)")
+  .option("-e, --expand <issueKey>", "Recursively discover and migrate all related issues from a seed issue key")
   .option("-d, --dry-run", "Preview migration without creating any Linear issues", false)
   .option("-c, --config <path>", "Path to config.json", "config.json")
   .option("-s, --state <path>", "Path to migration state file (for resume support)", "migration-state.json")
@@ -251,6 +287,7 @@ program
     try {
       await runMigration({
         jql: options.jql as string | undefined,
+        expand: options.expand as string | undefined,
         dryRun: options.dryRun as boolean,
         configPath: options.config as string,
         statePath: options.state as string,

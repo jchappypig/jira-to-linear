@@ -112,7 +112,7 @@ export class LinearMigrationClient {
     const teamKey = `${teamId}:${name.toLowerCase()}`;
     const wsKey = `ws:${name.toLowerCase()}`;
 
-    const existing = this.labels.get(teamKey) ?? this.labels.get(wsKey);
+    const existing = this.labels.get(teamKey);
     if (existing) return existing.id;
 
     const payload = await this.client.createIssueLabel({ name, color, teamId });

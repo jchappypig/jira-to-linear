@@ -43,6 +43,13 @@ export interface JiraProject {
   name: string;
 }
 
+export interface JiraIssueLink {
+  id: string;
+  type: { name: string; inward: string; outward: string };
+  inwardIssue?: { id: string; key: string };
+  outwardIssue?: { id: string; key: string };
+}
+
 export interface JiraIssueFields {
   summary: string;
   description: AdfNode | null;
@@ -58,6 +65,17 @@ export interface JiraIssueFields {
     fields: { summary: string; issuetype: JiraIssueType };
   };
   epic?: { id: string; key: string; summary?: string };
+  comment?: {
+    total: number;
+    comments: Array<{
+      id: string;
+      author: JiraUser;
+      body: AdfNode | null;
+      created: string;
+    }>;
+  };
+  issuelinks?: JiraIssueLink[];
+  customfield_10001?: { name: string } | null; // Team field
   customfield_10014?: string | null; // Epic Link (classic Jira Software)
   customfield_10016?: number | null; // Story Points
   labels?: string[];
@@ -94,6 +112,7 @@ export interface AppConfig {
   issueTypeMapping: Record<string, IssueTypeConfig>;
   stateMigration?: Record<string, string>;
   defaultTeamId?: string;
+  defaultTeamName?: string;
   batchSize?: number;
   rateLimitDelayMs?: number;
 }
@@ -137,6 +156,7 @@ export interface MappedIssue {
 
 export interface CliOptions {
   jql?: string;
+  expand?: string;
   dryRun: boolean;
   configPath: string;
   statePath: string;

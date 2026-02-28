@@ -2,7 +2,7 @@ import { AdfNode } from "./types";
 
 // adf-to-md has no TypeScript types - declare the module manually
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const adf2md = require("adf-to-md") as (adf: unknown) => { result: string; warnings: string[] };
+const adf2md = (require("adf-to-md") as { convert: (adf: unknown) => { result: string; warnings: string[] } }).convert;
 
 /**
  * Convert an Atlassian Document Format (ADF) node to a Markdown string.
@@ -105,10 +105,32 @@ function preprocessAdf(node: AdfNode): AdfNode {
       case "inlineCard":
       case "blockCard": {
         const url = (child.attrs?.url as string) ?? "";
+        return { type: "text", text: url };
+      }
+
+      case "table": {
+        // Render table rows as markdown table
+        const rows = child.content ?? [];
+        const markdownRows: string[] = [];
+        rows.forEach((row, rowIndex) => {
+          const cells = row.content ?? [];
+          const cellTexts = cells.map((cell) => {
+            const cellContent = cell.content ? cell.content.map(preprocessAdf) : [];
+            return cellContent
+              .map(extractPlainText)
+              .join(" ")
+              .replace(/\|/g, "\\|")
+              .trim();
+          });
+          markdownRows.push(`| ${cellTexts.join(" | ")} |`);
+          // Add separator after header row
+          if (rowIndex === 0) {
+            markdownRows.push(`| ${cellTexts.map(() => "---").join(" | ")} |`);
+          }
+        });
         return {
-          type: "text",
-          text: url,
-          marks: [{ type: "link", attrs: { href: url } }],
+          type: "paragraph",
+          content: [{ type: "text", text: markdownRows.join("\n") }],
         };
       }
 
