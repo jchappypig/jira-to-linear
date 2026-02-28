@@ -190,6 +190,7 @@ export class LinearMigrationClient {
     teamId: string;
     description?: string;
     assigneeId?: string;
+    subscriberIds?: string[];
     labelIds?: string[];
     parentId?: string;
     priority?: number;

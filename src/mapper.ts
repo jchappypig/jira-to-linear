@@ -31,6 +31,15 @@ export class IssueMapper {
       assigneeId = this.linearClient.resolveUserByEmail(fields.assignee.emailAddress);
     }
 
+    // Resolve Jira reviewers (customfield_15000) → Linear subscriber IDs
+    const subscriberIds: string[] = [];
+    for (const reviewer of fields.customfield_15000 ?? []) {
+      if (reviewer.emailAddress) {
+        const userId = this.linearClient.resolveUserByEmail(reviewer.emailAddress);
+        if (userId) subscriberIds.push(userId);
+      }
+    }
+
     const priority = PRIORITY_MAP[fields.priority?.name ?? ""] ?? 3;
 
     // Resolve issue type → Linear label
@@ -67,6 +76,7 @@ export class IssueMapper {
       teamId,
       labelIds,
       assigneeId,
+      subscriberIds,
       priority,
       parentJiraKey,
       isEpic: typeName === "Epic",

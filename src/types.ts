@@ -78,6 +78,7 @@ export interface JiraIssueFields {
   customfield_10001?: { name: string } | null; // Team field
   customfield_10014?: string | null; // Epic Link (classic Jira Software)
   customfield_10016?: number | null; // Story Points
+  customfield_15000?: JiraUser[] | null; // Reviewer
   labels?: string[];
   created: string;
   updated: string;
@@ -141,6 +142,7 @@ export interface MappedIssue {
   teamId: string;
   labelIds: string[];
   assigneeId?: string;
+  subscriberIds: string[];
   priority: 0 | 1 | 2 | 3 | 4;
   parentJiraKey?: string;
   stateId?: string;

@@ -17,6 +17,7 @@ const JIRA_FIELDS = [
   "customfield_10001", // Team field
   "customfield_10014", // Epic Link (classic Jira Software)
   "customfield_10016", // Story Points
+  "customfield_15000", // Reviewer
   "labels",
   "created",
   "updated",
