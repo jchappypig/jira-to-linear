@@ -39,7 +39,8 @@ export class LinearMigrationClient {
   private labels = new Map<string, LinearLabelInfo>();        // key: "teamId:lowercasedName" or "ws:name"
   private users = new Map<string, LinearUserInfo>();          // key: lowercased email
   private states = new Map<string, LinearStateInfo>();        // key: "teamId:lowercasedName"
-  private cycles = new Map<string, string>();                 // key: "teamId:sprintName" → cycleId
+  private cycles = new Map<string, string>();                 // key: cycleName → cycleId
+  private topLevelTeamId: string | undefined;
 
   constructor(apiKey: string) {
     this.client = new LinearClient({ apiKey });
@@ -51,15 +52,24 @@ export class LinearMigrationClient {
     return { id: viewer.id, name: viewer.displayName, email: viewer.email };
   }
 
-  /** Load all workspace teams into cache */
+  /** Load all workspace teams into cache, and detect the top-level team for cycle creation */
   async loadTeams(): Promise<void> {
-    const result = await this.client.teams({ first: 250 });
-    for (const team of result.nodes) {
+    // Use rawRequest via the underlying graphql client to fetch parent info
+    const result = await (this.client as unknown as {
+      client: { rawRequest<T>(query: string): Promise<{ data: T }> };
+    }).client.rawRequest<{
+      teams: { nodes: { id: string; name: string; key: string; parent: { id: string } | null }[] };
+    }>(`query { teams(first: 250) { nodes { id name key parent { id } } } }`);
+
+    for (const team of result.data.teams.nodes) {
       this.teams.set(team.name.toLowerCase(), {
         id: team.id,
         name: team.name,
         key: team.key,
       });
+      if (!team.parent) {
+        this.topLevelTeamId = team.id;
+      }
     }
   }
 
@@ -180,42 +190,62 @@ export class LinearMigrationClient {
   }
 
   /**
-   * Find or create a Linear cycle matching a Jira sprint name and dates.
-   * Cycles are keyed by teamId + sprint name so the same sprint across issues
-   * only creates one cycle.
+   * Normalize a Jira sprint name to a compact "FYXXSXX" cycle name.
+   * Examples:
+   *   "Enable FY26 Sprint 17" → "FY26S17"
+   *   "Convert FY26S17"       → "FY26S17"
+   *   "Receeve FY26 S17"      → "FY26S17"
+   *   "Scale FY26S13-15"      → "FY26S13-15"
+   * Returns undefined if the name doesn't match the expected pattern.
+   */
+  static normalizeCycleName(sprintName: string): string | undefined {
+    // Match FY + 2 digits + optional space + S + sprint number (may include range like 13-15)
+    const match = sprintName.match(/FY(\d{2})\s*[Ss](?:print\s*)?(\d+(?:-\d+)?)/i);
+    if (!match) return undefined;
+    return `FY${match[1]}S${match[2]}`;
+  }
+
+  /**
+   * Find or create a Linear cycle for a Jira sprint on the top-level team.
+   * Sprint names are normalized to "FYXXSXX" format so all sub-team sprints
+   * with the same number share one cycle.
+   * Throws if no top-level team was found.
    */
   async resolveOrCreateCycle(
-    teamId: string,
     sprintName: string,
     startDate: string,
     endDate: string
   ): Promise<string> {
-    const cacheKey = `${teamId}:${sprintName.toLowerCase()}`;
-    const cached = this.cycles.get(cacheKey);
+    const cycleName = LinearMigrationClient.normalizeCycleName(sprintName);
+    if (!cycleName) throw new Error(`Cannot normalize sprint name: "${sprintName}"`);
+
+    if (!this.topLevelTeamId) throw new Error("No top-level team found for cycle creation");
+
+    const cached = this.cycles.get(cycleName);
     if (cached) return cached;
 
-    // Check existing cycles on the team
-    const team = await this.client.team(teamId);
+    // Check existing cycles on the top-level team
+    const team = await this.client.team(this.topLevelTeamId);
     const existing = await team.cycles({ first: 250 });
     for (const cycle of existing.nodes) {
-      if (cycle.name?.toLowerCase() === sprintName.toLowerCase()) {
-        this.cycles.set(cacheKey, cycle.id);
+      if (cycle.name?.toLowerCase() === cycleName.toLowerCase()) {
+        this.cycles.set(cycleName, cycle.id);
         return cycle.id;
       }
     }
 
-    // Create a new cycle
-    const payload = await this.client.cycleCreate({
-      teamId,
-      name: sprintName,
+    // Create a new cycle on the top-level team
+    const payload = await this.client.createCycle({
+      teamId: this.topLevelTeamId,
+      name: cycleName,
       startsAt: new Date(startDate),
       endsAt: new Date(endDate),
     });
     if (!payload.success || !payload.cycle) {
-      throw new Error(`Failed to create cycle "${sprintName}"`);
+      throw new Error(`Failed to create cycle "${cycleName}"`);
     }
     const cycle = await payload.cycle;
-    this.cycles.set(cacheKey, cycle.id);
+    this.cycles.set(cycleName, cycle.id);
     return cycle.id;
   }
 

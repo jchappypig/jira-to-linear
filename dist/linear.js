@@ -9,7 +9,8 @@ class LinearMigrationClient {
     labels = new Map(); // key: "teamId:lowercasedName" or "ws:name"
     users = new Map(); // key: lowercased email
     states = new Map(); // key: "teamId:lowercasedName"
-    cycles = new Map(); // key: "teamId:sprintName" → cycleId
+    cycles = new Map(); // key: cycleName → cycleId
+    topLevelTeamId = undefined;
     constructor(apiKey) {
         this.client = new sdk_1.LinearClient({ apiKey });
     }
@@ -18,15 +19,18 @@ class LinearMigrationClient {
         const viewer = await this.client.viewer;
         return { id: viewer.id, name: viewer.displayName, email: viewer.email };
     }
-    /** Load all workspace teams into cache */
+    /** Load all workspace teams into cache, and detect the top-level team for cycle creation */
     async loadTeams() {
-        const result = await this.client.teams({ first: 250 });
-        for (const team of result.nodes) {
+        const result = await this.client.client.rawRequest(`query { teams(first: 250) { nodes { id name key parent { id } } } }`);
+        for (const team of result.data.teams.nodes) {
             this.teams.set(team.name.toLowerCase(), {
                 id: team.id,
                 name: team.name,
                 key: team.key,
             });
+            if (!team.parent) {
+                this.topLevelTeamId = team.id;
+            }
         }
     }
     /**
@@ -123,32 +127,40 @@ class LinearMigrationClient {
         const linearName = stateMigration?.[jiraStatusName] ?? jiraStatusName;
         return this.states.get(`${teamId}:${linearName.toLowerCase()}`)?.id;
     }
-    /** Find or create a Linear cycle matching a Jira sprint name and dates. */
-    async resolveOrCreateCycle(teamId, sprintName, startDate, endDate) {
-        const cacheKey = `${teamId}:${sprintName.toLowerCase()}`;
-        const cached = this.cycles.get(cacheKey);
+    /** Normalize a Jira sprint name to "FYXXSXX" format. Returns undefined if unrecognized. */
+    static normalizeCycleName(sprintName) {
+        const match = sprintName.match(/FY(\d{2})\s*[Ss](?:print\s*)?(\d+(?:-\d+)?)/i);
+        if (!match) return undefined;
+        return `FY${match[1]}S${match[2]}`;
+    }
+    /** Find or create a Linear cycle on the top-level team, using normalized sprint name. */
+    async resolveOrCreateCycle(sprintName, startDate, endDate) {
+        const cycleName = LinearMigrationClient.normalizeCycleName(sprintName);
+        if (!cycleName) throw new Error(`Cannot normalize sprint name: "${sprintName}"`);
+        if (!this.topLevelTeamId) throw new Error("No top-level team found for cycle creation");
+        const cached = this.cycles.get(cycleName);
         if (cached) return cached;
-        // Check existing cycles on the team
-        const team = await this.client.team(teamId);
+        // Check existing cycles on the top-level team
+        const team = await this.client.team(this.topLevelTeamId);
         const existing = await team.cycles({ first: 250 });
         for (const cycle of existing.nodes) {
-            if (cycle.name?.toLowerCase() === sprintName.toLowerCase()) {
-                this.cycles.set(cacheKey, cycle.id);
+            if (cycle.name?.toLowerCase() === cycleName.toLowerCase()) {
+                this.cycles.set(cycleName, cycle.id);
                 return cycle.id;
             }
         }
-        // Create a new cycle
-        const payload = await this.client.cycleCreate({
-            teamId,
-            name: sprintName,
+        // Create a new cycle on the top-level team
+        const payload = await this.client.createCycle({
+            teamId: this.topLevelTeamId,
+            name: cycleName,
             startsAt: new Date(startDate),
             endsAt: new Date(endDate),
         });
         if (!payload.success || !payload.cycle) {
-            throw new Error(`Failed to create cycle "${sprintName}"`);
+            throw new Error(`Failed to create cycle "${cycleName}"`);
         }
         const cycle = await payload.cycle;
-        this.cycles.set(cacheKey, cycle.id);
+        this.cycles.set(cycleName, cycle.id);
         return cycle.id;
     }
     /**
