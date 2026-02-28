@@ -41,12 +41,13 @@ export class IssueMapper {
     }
 
     // Resolve Jira sprint (customfield_10020) → Linear cycle ID
+    // Only assign active or future sprints — closed sprints are skipped because
+    // Linear teams with cycleLockToActive=true reject assignment to past cycles.
     let cycleId: string | undefined;
     const sprints = fields.customfield_10020;
     if (sprints && sprints.length > 0) {
-      // Use the last sprint in the array (most recent assignment)
       const sprint = sprints[sprints.length - 1];
-      if (sprint.startDate && sprint.endDate) {
+      if (sprint.startDate && sprint.endDate && sprint.state !== "closed") {
         try {
           cycleId = await this.linearClient.resolveOrCreateCycle(
             teamId,
@@ -54,8 +55,8 @@ export class IssueMapper {
             sprint.startDate,
             sprint.endDate
           );
-        } catch {
-          // Cycle creation is non-critical — proceed without it
+        } catch (err) {
+          console.warn(`WARN: Could not resolve cycle for sprint "${sprint.name}": ${err instanceof Error ? err.message : err}`);
         }
       }
     }
