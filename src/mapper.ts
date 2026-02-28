@@ -49,6 +49,7 @@ export class IssueMapper {
       if (sprint.startDate && sprint.endDate) {
         try {
           cycleId = await this.linearClient.resolveOrCreateCycle(
+            teamId,
             sprint.name,
             sprint.startDate,
             sprint.endDate

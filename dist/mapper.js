@@ -45,7 +45,7 @@ class IssueMapper {
             const sprint = sprints[sprints.length - 1];
             if (sprint.startDate && sprint.endDate) {
                 try {
-                    cycleId = await this.linearClient.resolveOrCreateCycle(sprint.name, sprint.startDate, sprint.endDate);
+                    cycleId = await this.linearClient.resolveOrCreateCycle(teamId, sprint.name, sprint.startDate, sprint.endDate);
                 } catch {
                     // Cycle creation is non-critical — proceed without it
                 }

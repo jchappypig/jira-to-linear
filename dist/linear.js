@@ -9,8 +9,7 @@ class LinearMigrationClient {
     labels = new Map(); // key: "teamId:lowercasedName" or "ws:name"
     users = new Map(); // key: lowercased email
     states = new Map(); // key: "teamId:lowercasedName"
-    cycles = new Map(); // key: cycleName → cycleId
-    topLevelTeamId = undefined;
+    cycles = new Map(); // key: "teamId:cycleName" → cycleId
     constructor(apiKey) {
         this.client = new sdk_1.LinearClient({ apiKey });
     }
@@ -19,18 +18,15 @@ class LinearMigrationClient {
         const viewer = await this.client.viewer;
         return { id: viewer.id, name: viewer.displayName, email: viewer.email };
     }
-    /** Load all workspace teams into cache, and detect the top-level team for cycle creation */
+    /** Load all workspace teams into cache */
     async loadTeams() {
-        const result = await this.client.client.rawRequest(`query { teams(first: 250) { nodes { id name key parent { id } } } }`);
-        for (const team of result.data.teams.nodes) {
+        const result = await this.client.teams({ first: 250 });
+        for (const team of result.nodes) {
             this.teams.set(team.name.toLowerCase(), {
                 id: team.id,
                 name: team.name,
                 key: team.key,
             });
-            if (!team.parent) {
-                this.topLevelTeamId = team.id;
-            }
         }
     }
     /**
@@ -133,25 +129,25 @@ class LinearMigrationClient {
         if (!match) return undefined;
         return `FY${match[1]}S${match[2]}`;
     }
-    /** Find or create a Linear cycle on the top-level team, using normalized sprint name. */
-    async resolveOrCreateCycle(sprintName, startDate, endDate) {
+    /** Find or create a Linear cycle on the given team, using normalized sprint name. */
+    async resolveOrCreateCycle(teamId, sprintName, startDate, endDate) {
         const cycleName = LinearMigrationClient.normalizeCycleName(sprintName);
         if (!cycleName) throw new Error(`Cannot normalize sprint name: "${sprintName}"`);
-        if (!this.topLevelTeamId) throw new Error("No top-level team found for cycle creation");
-        const cached = this.cycles.get(cycleName);
+        const cacheKey = `${teamId}:${cycleName}`;
+        const cached = this.cycles.get(cacheKey);
         if (cached) return cached;
-        // Check existing cycles on the top-level team
-        const team = await this.client.team(this.topLevelTeamId);
+        // Check existing cycles on this team
+        const team = await this.client.team(teamId);
         const existing = await team.cycles({ first: 250 });
         for (const cycle of existing.nodes) {
             if (cycle.name?.toLowerCase() === cycleName.toLowerCase()) {
-                this.cycles.set(cycleName, cycle.id);
+                this.cycles.set(cacheKey, cycle.id);
                 return cycle.id;
             }
         }
-        // Create a new cycle on the top-level team
+        // Create a new cycle on this team
         const payload = await this.client.createCycle({
-            teamId: this.topLevelTeamId,
+            teamId,
             name: cycleName,
             startsAt: new Date(startDate),
             endsAt: new Date(endDate),
@@ -160,7 +156,7 @@ class LinearMigrationClient {
             throw new Error(`Failed to create cycle "${cycleName}"`);
         }
         const cycle = await payload.cycle;
-        this.cycles.set(cycleName, cycle.id);
+        this.cycles.set(cacheKey, cycle.id);
         return cycle.id;
     }
     /**
