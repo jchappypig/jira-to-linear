@@ -47,6 +47,8 @@ export class IssueMapper {
     //   if that cycle is completed in Linear → fall back to active Linear cycle
     // - No sprint → no cycle
     let cycleId: string | undefined;
+    let cycleIsActive = false;
+    const activeCycleId = await this.linearClient.getActiveCycleId(teamId);
     const sprints = fields.customfield_10020;
     const isDone = ["Done", "Closed", "Resolved", "Released"].includes(fields.status.name);
     if (sprints && sprints.length > 0) {
@@ -55,8 +57,7 @@ export class IssueMapper {
         if (isDone) {
           return { ...({} as MappedIssue), skipMigration: true };
         }
-        cycleId = await this.linearClient.getActiveCycleId(teamId)
-          ?? await this.linearClient.getNextCycleId(teamId);
+        cycleId = activeCycleId ?? await this.linearClient.getNextCycleId(teamId);
       } else if (sprint.startDate && sprint.endDate) {
         try {
           cycleId = await this.linearClient.resolveOrCreateCycle(
@@ -64,11 +65,11 @@ export class IssueMapper {
           );
         } catch (err) {
           console.warn(`WARN: Sprint "${sprint.name}" cycle completed in Linear, moving to active cycle`);
-          cycleId = await this.linearClient.getActiveCycleId(teamId)
-            ?? await this.linearClient.getNextCycleId(teamId);
+          cycleId = activeCycleId ?? await this.linearClient.getNextCycleId(teamId);
         }
       }
     }
+    cycleIsActive = !!cycleId && cycleId === activeCycleId;
 
     const priority = PRIORITY_MAP[fields.priority?.name ?? ""] ?? 3;
 
@@ -111,6 +112,7 @@ export class IssueMapper {
       assigneeId,
       subscriberIds,
       cycleId,
+      cycleIsActive,
       estimate,
       priority,
       parentJiraKey,

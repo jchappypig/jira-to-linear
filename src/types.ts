@@ -154,6 +154,7 @@ export interface MappedIssue {
   assigneeId?: string;
   subscriberIds: string[];
   cycleId?: string;
+  cycleIsActive?: boolean; // true only if cycleId refers to the currently active cycle
   estimate?: number;
   priority: 0 | 1 | 2 | 3 | 4;
   parentJiraKey?: string;
