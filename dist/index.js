@@ -165,7 +165,10 @@ async function runMigration(opts) {
                     console.warn(`WARN: Parent ${mapped.parentJiraKey} not yet migrated — ${key} will be created without a parent.`);
                 }
             }
-            const stateId = linearClient.resolveStateId(mapped.jiraStatusName, teamId, config.stateMigration);
+            // If no cycle and status maps to Backlog, use Todo instead
+            const mappedStateName = config.stateMigration?.[mapped.jiraStatusName] ?? mapped.jiraStatusName;
+            const effectiveStateName = !mapped.cycleId && mappedStateName === "Backlog" ? "Todo" : mappedStateName;
+            const stateId = linearClient.resolveStateId(effectiveStateName, teamId);
             if (opts.dryRun) {
                 console.log(`[DRY RUN] ${key} → "${mapped.title}"`);
                 if (opts.verbose) {
