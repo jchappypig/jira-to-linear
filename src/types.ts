@@ -43,6 +43,14 @@ export interface JiraProject {
   name: string;
 }
 
+export interface JiraSprint {
+  id: number;
+  name: string;
+  state: "active" | "closed" | "future";
+  startDate?: string;
+  endDate?: string;
+}
+
 export interface JiraIssueLink {
   id: string;
   type: { name: string; inward: string; outward: string };
@@ -79,6 +87,7 @@ export interface JiraIssueFields {
   customfield_10014?: string | null; // Epic Link (classic Jira Software)
   customfield_10016?: number | null; // Story Points
   customfield_15000?: JiraUser[] | null; // Reviewer
+  customfield_10020?: JiraSprint[] | null; // Sprint
   labels?: string[];
   created: string;
   updated: string;
@@ -143,6 +152,7 @@ export interface MappedIssue {
   labelIds: string[];
   assigneeId?: string;
   subscriberIds: string[];
+  cycleId?: string;
   priority: 0 | 1 | 2 | 3 | 4;
   parentJiraKey?: string;
   stateId?: string;

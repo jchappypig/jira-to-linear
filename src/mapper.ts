@@ -40,6 +40,26 @@ export class IssueMapper {
       }
     }
 
+    // Resolve Jira sprint (customfield_10020) → Linear cycle ID
+    let cycleId: string | undefined;
+    const sprints = fields.customfield_10020;
+    if (sprints && sprints.length > 0) {
+      // Use the last sprint in the array (most recent assignment)
+      const sprint = sprints[sprints.length - 1];
+      if (sprint.startDate && sprint.endDate) {
+        try {
+          cycleId = await this.linearClient.resolveOrCreateCycle(
+            teamId,
+            sprint.name,
+            sprint.startDate,
+            sprint.endDate
+          );
+        } catch {
+          // Cycle creation is non-critical — proceed without it
+        }
+      }
+    }
+
     const priority = PRIORITY_MAP[fields.priority?.name ?? ""] ?? 3;
 
     // Resolve issue type → Linear label
@@ -77,6 +97,7 @@ export class IssueMapper {
       labelIds,
       assigneeId,
       subscriberIds,
+      cycleId,
       priority,
       parentJiraKey,
       isEpic: typeName === "Epic",

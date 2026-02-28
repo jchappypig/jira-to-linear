@@ -39,6 +39,7 @@ export class LinearMigrationClient {
   private labels = new Map<string, LinearLabelInfo>();        // key: "teamId:lowercasedName" or "ws:name"
   private users = new Map<string, LinearUserInfo>();          // key: lowercased email
   private states = new Map<string, LinearStateInfo>();        // key: "teamId:lowercasedName"
+  private cycles = new Map<string, string>();                 // key: "teamId:sprintName" → cycleId
 
   constructor(apiKey: string) {
     this.client = new LinearClient({ apiKey });
@@ -179,11 +180,51 @@ export class LinearMigrationClient {
   }
 
   /**
+   * Find or create a Linear cycle matching a Jira sprint name and dates.
+   * Cycles are keyed by teamId + sprint name so the same sprint across issues
+   * only creates one cycle.
+   */
+  async resolveOrCreateCycle(
+    teamId: string,
+    sprintName: string,
+    startDate: string,
+    endDate: string
+  ): Promise<string> {
+    const cacheKey = `${teamId}:${sprintName.toLowerCase()}`;
+    const cached = this.cycles.get(cacheKey);
+    if (cached) return cached;
+
+    // Check existing cycles on the team
+    const team = await this.client.team(teamId);
+    const existing = await team.cycles({ first: 250 });
+    for (const cycle of existing.nodes) {
+      if (cycle.name?.toLowerCase() === sprintName.toLowerCase()) {
+        this.cycles.set(cacheKey, cycle.id);
+        return cycle.id;
+      }
+    }
+
+    // Create a new cycle
+    const payload = await this.client.cycleCreate({
+      teamId,
+      name: sprintName,
+      startsAt: new Date(startDate),
+      endsAt: new Date(endDate),
+    });
+    if (!payload.success || !payload.cycle) {
+      throw new Error(`Failed to create cycle "${sprintName}"`);
+    }
+    const cycle = await payload.cycle;
+    this.cycles.set(cacheKey, cycle.id);
+    return cycle.id;
+  }
+
+  /**
    * Create a Linear issue.
    *
    * Key IssueCreateInput fields used:
    *   title, teamId, description (markdown), assigneeId,
-   *   labelIds, parentId, priority (0-4), stateId
+   *   labelIds, parentId, priority (0-4), stateId, cycleId
    */
   async createIssue(input: {
     title: string;
@@ -195,6 +236,7 @@ export class LinearMigrationClient {
     parentId?: string;
     priority?: number;
     stateId?: string;
+    cycleId?: string;
   }): Promise<CreatedIssue> {
     const payload = await this.client.createIssue(input);
 

@@ -185,6 +185,7 @@ async function runMigration(opts) {
                 labelIds: mapped.labelIds.length ? mapped.labelIds : undefined,
                 assigneeId: mapped.assigneeId,
                 subscriberIds: mapped.subscriberIds.length ? mapped.subscriberIds : undefined,
+                cycleId: mapped.cycleId,
                 parentId,
                 priority: mapped.priority,
                 stateId,
