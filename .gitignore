@@ -4,3 +4,8 @@ dist/
 migration-state.json
 config.json
 *.js.map
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
