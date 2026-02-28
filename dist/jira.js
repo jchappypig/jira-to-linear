@@ -20,7 +20,8 @@ const JIRA_FIELDS = [
     "issuelinks",
     "customfield_10001", // Team field
     "customfield_10014", // Epic Link (classic Jira Software)
-    "customfield_10016", // Story Points
+    "customfield_10016", // Story Points (legacy)
+    "customfield_10028", // Story Points (next-gen)
     "customfield_15000", // Reviewer
     "customfield_10020", // Sprint
     "labels",

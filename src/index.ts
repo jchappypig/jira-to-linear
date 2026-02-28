@@ -197,6 +197,7 @@ async function runMigration(opts: CliOptions): Promise<void> {
         assigneeId: mapped.assigneeId,
         subscriberIds: mapped.subscriberIds.length ? mapped.subscriberIds : undefined,
         cycleId: mapped.cycleId,
+        estimate: mapped.estimate,
         parentId,
         priority: mapped.priority,
         stateId,

@@ -87,6 +87,9 @@ export class IssueMapper {
     const parentJiraKey = resolveParentKey(jiraIssue);
     const jiraUrl = `${this.jiraBaseUrl.replace(/\/$/, "")}/browse/${key}`;
 
+    // Story points: prefer next-gen field (10028), fall back to legacy (10016)
+    const estimate = fields.customfield_10028 ?? fields.customfield_10016 ?? undefined;
+
     return {
       jiraKey: key,
       jiraId: id,
@@ -98,6 +101,7 @@ export class IssueMapper {
       assigneeId,
       subscriberIds,
       cycleId,
+      estimate,
       priority,
       parentJiraKey,
       isEpic: typeName === "Epic",

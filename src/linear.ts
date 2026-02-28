@@ -256,6 +256,7 @@ export class LinearMigrationClient {
     priority?: number;
     stateId?: string;
     cycleId?: string;
+    estimate?: number;
   }): Promise<CreatedIssue> {
     const payload = await this.client.createIssue(input);
 

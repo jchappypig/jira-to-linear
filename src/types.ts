@@ -85,7 +85,8 @@ export interface JiraIssueFields {
   issuelinks?: JiraIssueLink[];
   customfield_10001?: { name: string } | null; // Team field
   customfield_10014?: string | null; // Epic Link (classic Jira Software)
-  customfield_10016?: number | null; // Story Points
+  customfield_10016?: number | null; // Story Points (legacy)
+  customfield_10028?: number | null; // Story Points (next-gen)
   customfield_15000?: JiraUser[] | null; // Reviewer
   customfield_10020?: JiraSprint[] | null; // Sprint
   labels?: string[];
@@ -153,6 +154,7 @@ export interface MappedIssue {
   assigneeId?: string;
   subscriberIds: string[];
   cycleId?: string;
+  estimate?: number;
   priority: 0 | 1 | 2 | 3 | 4;
   parentJiraKey?: string;
   stateId?: string;
