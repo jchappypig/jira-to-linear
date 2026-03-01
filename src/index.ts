@@ -155,7 +155,7 @@ async function runMigration(opts: CliOptions): Promise<void> {
     }
 
     try {
-      const mapped = await mapper.mapIssue(jiraIssue, teamId);
+      const mapped = await mapper.mapIssue(jiraIssue, teamId, sorted);
 
       if (mapped.skipMigration) {
         console.log(`SKIP (done in closed sprint): ${key}`);

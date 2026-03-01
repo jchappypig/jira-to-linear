@@ -20,7 +20,7 @@ export class IssueMapper {
     private readonly jiraBaseUrl: string
   ) {}
 
-  async mapIssue(jiraIssue: JiraIssue, teamId: string): Promise<MappedIssue> {
+  async mapIssue(jiraIssue: JiraIssue, teamId: string, allIssues: JiraIssue[] = []): Promise<MappedIssue> {
     const { fields, key, id } = jiraIssue;
 
     const description = convertAdfToMarkdown(fields.description);
@@ -46,30 +46,36 @@ export class IssueMapper {
     // - Active/future sprint → find/create matching Linear cycle;
     //   if that cycle is completed in Linear → fall back to active Linear cycle
     // - No sprint → no cycle
+    // - Epic → derive cycle from child issues (most current active/future sprint)
     let cycleId: string | undefined;
     let sprintState: "active" | "future" | "closed" | undefined;
-    const sprints = fields.customfield_10020;
     const isDone = ["Done", "Closed", "Resolved", "Released"].includes(fields.status.name);
-    if (sprints && sprints.length > 0) {
-      const sprint = sprints[sprints.length - 1];
-      sprintState = sprint.state;
-      if (sprint.state === "closed") {
-        if (isDone) {
-          return { ...({} as MappedIssue), skipMigration: true };
-        }
-        // Not done in a closed sprint — carry forward to active cycle
-        cycleId = await this.linearClient.getActiveCycleId(teamId)
-          ?? await this.linearClient.getNextCycleId(teamId);
-      } else if (sprint.startDate && sprint.endDate) {
-        // Active or future sprint — find/create matching cycle
-        try {
-          cycleId = await this.linearClient.resolveOrCreateCycle(
-            teamId, sprint.name, sprint.startDate, sprint.endDate
-          );
-        } catch (err) {
-          console.warn(`WARN: Sprint "${sprint.name}" cycle completed in Linear, moving to active cycle`);
+
+    if (fields.issuetype.name === "Epic") {
+      cycleId = await this.resolveEpicCycleId(key, teamId, allIssues);
+    } else {
+      const sprints = fields.customfield_10020;
+      if (sprints && sprints.length > 0) {
+        const sprint = sprints[sprints.length - 1];
+        sprintState = sprint.state;
+        if (sprint.state === "closed") {
+          if (isDone) {
+            return { ...({} as MappedIssue), skipMigration: true };
+          }
+          // Not done in a closed sprint — carry forward to active cycle
           cycleId = await this.linearClient.getActiveCycleId(teamId)
             ?? await this.linearClient.getNextCycleId(teamId);
+        } else if (sprint.startDate && sprint.endDate) {
+          // Active or future sprint — find/create matching cycle
+          try {
+            cycleId = await this.linearClient.resolveOrCreateCycle(
+              teamId, sprint.name, sprint.startDate, sprint.endDate
+            );
+          } catch (err) {
+            console.warn(`WARN: Sprint "${sprint.name}" cycle completed in Linear, moving to active cycle`);
+            cycleId = await this.linearClient.getActiveCycleId(teamId)
+              ?? await this.linearClient.getNextCycleId(teamId);
+          }
         }
       }
     }
@@ -128,6 +134,60 @@ export class IssueMapper {
       reporterEmail: fields.reporter?.emailAddress,
       jiraStatusName: fields.status.name,
     };
+  }
+
+  /**
+   * Derive a cycle ID for an epic by inspecting the sprints of its child issues.
+   *
+   * Rules:
+   * - Collect all sprints from direct children (issues whose parent/epicLink = epicKey)
+   * - Keep only active or future sprints
+   * - If none → no cycle (epic was worked but abandoned, or never started)
+   * - If some → pick the most current: active sprint first, then nearest future by startDate
+   */
+  private async resolveEpicCycleId(
+    epicKey: string,
+    teamId: string,
+    allIssues: JiraIssue[]
+  ): Promise<string | undefined> {
+    const children = allIssues.filter((i) => {
+      if (i.key === epicKey) return false;
+      return (
+        i.fields.parent?.key === epicKey ||
+        i.fields.customfield_10014 === epicKey ||
+        i.fields.epic?.key === epicKey
+      );
+    });
+
+    // Gather the last sprint from each child, keeping only active/future ones
+    const relevantSprints = children
+      .flatMap((child) => {
+        const sprints = child.fields.customfield_10020;
+        if (!sprints || sprints.length === 0) return [];
+        return [sprints[sprints.length - 1]];
+      })
+      .filter((s) => s.state === "active" || s.state === "future");
+
+    if (relevantSprints.length === 0) return undefined;
+
+    // Prefer active sprint; among multiple futures pick the one starting soonest
+    const active = relevantSprints.find((s) => s.state === "active");
+    const chosen = active ?? relevantSprints.reduce((a, b) => {
+      const aStart = a.startDate ? new Date(a.startDate).getTime() : Infinity;
+      const bStart = b.startDate ? new Date(b.startDate).getTime() : Infinity;
+      return aStart <= bStart ? a : b;
+    });
+
+    if (!chosen.startDate || !chosen.endDate) return undefined;
+
+    try {
+      return await this.linearClient.resolveOrCreateCycle(
+        teamId, chosen.name, chosen.startDate, chosen.endDate
+      );
+    } catch {
+      return await this.linearClient.getActiveCycleId(teamId)
+        ?? await this.linearClient.getNextCycleId(teamId);
+    }
   }
 }
 
