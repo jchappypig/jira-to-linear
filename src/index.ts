@@ -4,7 +4,7 @@ import "dotenv/config";
 import { program } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { AppConfig, CliOptions, MigrationState } from "./types";
+import { AppConfig, BackfillOptions, CliOptions, MigrationState } from "./types";
 import { convertAdfToMarkdown } from "./adf-to-markdown";
 import { JiraClient } from "./jira";
 import { LinearMigrationClient } from "./linear";
@@ -285,6 +285,126 @@ async function runMigration(opts: CliOptions): Promise<void> {
   }
 }
 
+// ── Backfill assignees orchestrator ───────────────────────────────────────
+
+async function runBackfill(opts: BackfillOptions): Promise<void> {
+  const state = loadState(opts.statePath);
+
+  // Build inverted map: linearId → jiraKey
+  const linearIdToJiraKey = Object.fromEntries(
+    Object.entries(state.jiraKeyToLinearId).map(([jiraKey, linearId]) => [linearId, jiraKey])
+  );
+
+  if (Object.keys(linearIdToJiraKey).length === 0) {
+    throw new Error("Migration state is empty — nothing to backfill.");
+  }
+
+  // Validate required environment variables
+  const jiraBaseUrl = process.env.JIRA_BASE_URL;
+  const jiraEmail = process.env.JIRA_EMAIL;
+  const jiraToken = process.env.JIRA_API_TOKEN;
+  const linearKey = process.env.LINEAR_API_KEY;
+
+  if (!jiraBaseUrl || !jiraEmail || !jiraToken || !linearKey) {
+    throw new Error(
+      "Missing env vars. Ensure JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, and LINEAR_API_KEY are set in your .env file."
+    );
+  }
+
+  const jiraClient = new JiraClient(jiraBaseUrl, jiraEmail, jiraToken);
+  const linearClient = new LinearMigrationClient(linearKey);
+
+  const viewer = await linearClient.getViewer();
+  console.log(`Connected to Linear as: ${viewer.name} (${viewer.email})`);
+
+  console.log("Loading Linear workspace data...");
+  await linearClient.loadTeams();
+  await linearClient.loadUsers();
+
+  // Resolve the target team by name (direct name match, no teamMapping needed)
+  const teamId = linearClient.resolveTeamId(opts.teamName, {});
+  if (!teamId) {
+    throw new Error(`Linear team "${opts.teamName}" not found. Check the --team name.`);
+  }
+  console.log(`Fetching all issues for team "${opts.teamName}"...`);
+
+  const linearIssues = await linearClient.getTeamIssues(teamId);
+  console.log(`Found ${linearIssues.length} Linear issues.`);
+
+  const rateLimitMs = 500;
+  let updated = 0;
+  let skippedNoJira = 0;
+  let skippedNoAssignee = 0;
+  let skippedUnresolved = 0;
+  let skippedAlreadyAssigned = 0;
+  let failed = 0;
+
+  for (const issue of linearIssues) {
+    const jiraKey = linearIdToJiraKey[issue.id];
+
+    if (!jiraKey) {
+      if (opts.verbose) console.log(`SKIP (not from Jira): ${issue.identifier}`);
+      skippedNoJira++;
+      continue;
+    }
+
+    let assigneeEmail: string | undefined;
+    try {
+      const jiraIssue = await jiraClient.fetchIssueByKey(jiraKey);
+      assigneeEmail = jiraIssue.fields.assignee?.emailAddress;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`WARN: Could not fetch Jira issue ${jiraKey}: ${msg}`);
+      failed++;
+      continue;
+    }
+
+    if (!assigneeEmail) {
+      if (opts.verbose) console.log(`SKIP (no Jira assignee): ${issue.identifier} ← ${jiraKey}`);
+      skippedNoAssignee++;
+      continue;
+    }
+
+    const assigneeId = linearClient.resolveUserByEmail(assigneeEmail);
+    if (!assigneeId) {
+      console.warn(`WARN: Cannot resolve ${assigneeEmail} to a Linear user — skipping ${issue.identifier}`);
+      skippedUnresolved++;
+      continue;
+    }
+
+    if (issue.assigneeId) {
+      if (opts.verbose) console.log(`SKIP (Linear assignee takes precedence): ${issue.identifier} → keeping existing assignee`);
+      skippedAlreadyAssigned++;
+      continue;
+    }
+
+    if (opts.dryRun) {
+      console.log(`[DRY RUN] ${issue.identifier} ← ${jiraKey}: would assign ${assigneeEmail}`);
+      updated++;
+      continue;
+    }
+
+    try {
+      await linearClient.updateIssue(issue.id, { assigneeId });
+      console.log(`UPDATED: ${issue.identifier} ← ${jiraKey}: assigned ${assigneeEmail}`);
+      await sleep(rateLimitMs);
+      updated++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`ERROR: ${issue.identifier}: ${msg}`);
+      failed++;
+    }
+  }
+
+  console.log("\n=== Backfill complete ===");
+  console.log(`  Updated               : ${updated}`);
+  console.log(`  Skipped (not Jira)    : ${skippedNoJira}`);
+  console.log(`  Skipped (no assignee) : ${skippedNoAssignee}`);
+  console.log(`  Skipped (unresolved)  : ${skippedUnresolved}`);
+  console.log(`  Skipped (Linear wins) : ${skippedAlreadyAssigned}`);
+  console.log(`  Failed                : ${failed}`);
+}
+
 // ── CLI definition ─────────────────────────────────────────────────────────
 
 program
@@ -305,6 +425,29 @@ program
         dryRun: options.dryRun as boolean,
         configPath: options.config as string,
         statePath: options.state as string,
+        verbose: options.verbose as boolean,
+      });
+    } catch (err) {
+      console.error("Fatal:", err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("backfill-assignees")
+  .description("Assign Linear issues based on their original Jira assignees")
+  .requiredOption("-t, --team <name>", "Linear team name to backfill")
+  .option("-c, --config <path>", "Path to config.json", "config.json")
+  .option("-s, --state <path>", "Path to migration state file", "migration-state.json")
+  .option("-d, --dry-run", "Preview without making changes", false)
+  .option("-v, --verbose", "Print detailed logs", false)
+  .action(async (options: Record<string, unknown>) => {
+    try {
+      await runBackfill({
+        teamName: options.team as string,
+        configPath: options.config as string,
+        statePath: options.state as string,
+        dryRun: options.dryRun as boolean,
         verbose: options.verbose as boolean,
       });
     } catch (err) {

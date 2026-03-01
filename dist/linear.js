@@ -128,26 +128,48 @@ class LinearMigrationClient {
         const linearName = stateMigration?.[jiraStatusName] ?? jiraStatusName;
         return this.states.get(`${teamId}:${linearName.toLowerCase()}`)?.id;
     }
-    /** Normalize a Jira sprint name to "FYXXSXX" format. Returns undefined if unrecognized. */
+    /**
+     * Normalize a Jira sprint name to a compact "FYXXSXX" cycle name.
+     * Examples:
+     *   "Enable FY26 Sprint 17" → "FY26S17"
+     *   "Convert FY26S17"       → "FY26S17"
+     *   "Receeve FY26 S17"      → "FY26S17"
+     *   "Scale FY26S13-15"      → "FY26S13-15"
+     * Returns undefined if the name doesn't match the expected pattern.
+     */
     static normalizeCycleName(sprintName) {
+        // Match FY + 2 digits + optional space + S + sprint number (may include range like 13-15)
         const match = sprintName.match(/FY(\d{2})\s*[Ss](?:print\s*)?(\d+(?:-\d+)?)/i);
-        if (!match) return undefined;
+        if (!match)
+            return undefined;
         return `FY${match[1]}S${match[2]}`;
     }
-    /** Find or create a Linear cycle for a Jira sprint.
-     * Always creates on root team (Indebted-rd); returns the sub-team's inherited cycle ID.
-     * Throws if the cycle is already completed in Linear. */
+    /**
+     * Find or create a Linear cycle for a Jira sprint.
+     * Cycles are created on the root team (Indebted-rd) and inherited by sub-teams.
+     * Each sub-team has its own cycle ID for the inherited cycle, so we look up
+     * the cycle ID from the sub-team by name after ensuring it exists on the root team.
+     * Sprint names are normalized to "FYXXSXX" format.
+     */
+    /**
+     * Find or create a Linear cycle for a Jira sprint.
+     * Cycles are always created on the root team (Indebted-rd) and inherited by sub-teams.
+     * Returns the sub-team's inherited cycle ID, or throws if the cycle is completed in Linear.
+     */
     async resolveOrCreateCycle(teamId, sprintName, startDate, endDate) {
         const cycleName = LinearMigrationClient.normalizeCycleName(sprintName);
-        if (!cycleName) throw new Error(`Cannot normalize sprint name: "${sprintName}"`);
-        if (!this.rootTeamId) throw new Error("Root team not loaded — call loadTeams() first.");
+        if (!cycleName)
+            throw new Error(`Cannot normalize sprint name: "${sprintName}"`);
+        if (!this.rootTeamId)
+            throw new Error("Root team not loaded — call loadTeams() first.");
         const cacheKey = `${teamId}:${cycleName}`;
         const cached = this.cycles.get(cacheKey);
-        if (cached) return cached;
-        // Ensure the cycle exists on the root team
+        if (cached)
+            return cached;
+        // Ensure the cycle exists on the root team (create if missing)
         const rootTeam = await this.client.team(this.rootTeamId);
         const rootCycles = await rootTeam.cycles({ first: 250 });
-        const existsOnRoot = rootCycles.nodes.some(c => c.name?.toLowerCase() === cycleName.toLowerCase());
+        const existsOnRoot = rootCycles.nodes.some((c) => c.name?.toLowerCase() === cycleName.toLowerCase());
         if (!existsOnRoot) {
             const payload = await this.client.createCycle({
                 teamId: this.rootTeamId,
@@ -163,14 +185,16 @@ class LinearMigrationClient {
         const subTeam = await this.client.team(teamId);
         const subCycles = await subTeam.cycles({ first: 250 });
         for (const cycle of subCycles.nodes) {
-            if (cycle.name?.toLowerCase() !== cycleName.toLowerCase()) continue;
-            if (cycle.completedAt) continue; // skip old completed duplicate with same name
+            if (cycle.name?.toLowerCase() !== cycleName.toLowerCase())
+                continue;
+            if (cycle.completedAt)
+                continue; // skip old completed duplicate with same name
             this.cycles.set(cacheKey, cycle.id);
             return cycle.id;
         }
         throw new Error(`Cycle "${cycleName}" is already completed in Linear`);
     }
-    /** Return the active cycle ID for a team. Trusts Linear's activeCycle field completely. */
+    /** Return the active cycle ID for a team. Trusts Linear's own activeCycle field completely. */
     async getActiveCycleId(teamId) {
         const team = await this.client.team(teamId);
         const activeCycle = await team.activeCycle;
@@ -183,10 +207,12 @@ class LinearMigrationClient {
         const now = new Date();
         let next;
         for (const cycle of cycles.nodes) {
-            if (!cycle.startsAt || !cycle.endsAt || cycle.completedAt) continue;
+            if (!cycle.startsAt || !cycle.endsAt || cycle.completedAt)
+                continue;
             const startsAt = new Date(cycle.startsAt);
             if (startsAt > now) {
-                if (!next || startsAt < next.startsAt) next = { id: cycle.id, startsAt };
+                if (!next || startsAt < next.startsAt)
+                    next = { id: cycle.id, startsAt };
             }
         }
         return next?.id;
@@ -218,6 +244,34 @@ class LinearMigrationClient {
         if (!payload.success) {
             throw new Error(`Failed to add comment to issue ${issueId}`);
         }
+    }
+    /** Update a Linear issue (e.g. set assigneeId) */
+    async updateIssue(id, input) {
+        await this.client.updateIssue(id, input);
+    }
+    /**
+     * Fetch all issues for a Linear team, paginated.
+     * Returns an array of { id, identifier, assigneeId } objects.
+     */
+    async getTeamIssues(teamId) {
+        const team = await this.client.team(teamId);
+        const results = [];
+        let after;
+        while (true) {
+            const page = await team.issues({ first: 100, after });
+            for (const issue of page.nodes) {
+                const assignee = await issue.assignee;
+                results.push({
+                    id: issue.id,
+                    identifier: issue.identifier,
+                    assigneeId: assignee?.id,
+                });
+            }
+            if (!page.pageInfo.hasNextPage)
+                break;
+            after = page.pageInfo.endCursor ?? undefined;
+        }
+        return results;
     }
 }
 exports.LinearMigrationClient = LinearMigrationClient;

@@ -180,3 +180,11 @@ export interface CliOptions {
   statePath: string;
   verbose: boolean;
 }
+
+export interface BackfillOptions {
+  teamName: string;
+  configPath: string;
+  statePath: string;
+  dryRun: boolean;
+  verbose: boolean;
+}

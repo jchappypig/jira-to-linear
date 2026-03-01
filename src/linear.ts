@@ -323,4 +323,35 @@ export class LinearMigrationClient {
       throw new Error(`Failed to add comment to issue ${issueId}`);
     }
   }
+
+  /** Update a Linear issue (e.g. set assigneeId) */
+  async updateIssue(id: string, input: { assigneeId?: string }): Promise<void> {
+    await this.client.updateIssue(id, input);
+  }
+
+  /**
+   * Fetch all issues for a Linear team, paginated.
+   * Returns an array of { id, identifier, assigneeId } objects.
+   */
+  async getTeamIssues(teamId: string): Promise<Array<{ id: string; identifier: string; assigneeId: string | undefined }>> {
+    const team = await this.client.team(teamId);
+    const results: Array<{ id: string; identifier: string; assigneeId: string | undefined }> = [];
+    let after: string | undefined;
+
+    while (true) {
+      const page = await team.issues({ first: 100, after });
+      for (const issue of page.nodes) {
+        const assignee = await issue.assignee;
+        results.push({
+          id: issue.id,
+          identifier: issue.identifier,
+          assigneeId: assignee?.id,
+        });
+      }
+      if (!page.pageInfo.hasNextPage) break;
+      after = page.pageInfo.endCursor ?? undefined;
+    }
+
+    return results;
+  }
 }
