@@ -229,6 +229,24 @@ export class LinearMigrationClient {
   }
 
   /** Return the next upcoming cycle ID (soonest future start), or undefined if none. */
+  /** Look up an existing Linear cycle by sprint name (normalised). Returns undefined if not found. */
+  async resolveCycleByName(teamId: string, sprintName: string): Promise<string | undefined> {
+    const cycleName = LinearMigrationClient.normalizeCycleName(sprintName);
+    if (!cycleName) return undefined;
+    const cacheKey = `${teamId}:${cycleName}`;
+    const cached = this.cycles.get(cacheKey);
+    if (cached) return cached;
+    const team = await this.client.team(teamId);
+    const cycles = await team.cycles({ first: 250 });
+    for (const cycle of cycles.nodes) {
+      if (cycle.name?.toLowerCase() === cycleName.toLowerCase() && !cycle.completedAt) {
+        this.cycles.set(cacheKey, cycle.id);
+        return cycle.id;
+      }
+    }
+    return undefined;
+  }
+
   async getNextCycleId(teamId: string): Promise<string | undefined> {
     const team = await this.client.team(teamId);
     const cycles = await team.cycles({ first: 250 });

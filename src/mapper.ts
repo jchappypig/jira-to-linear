@@ -66,7 +66,7 @@ export class IssueMapper {
           cycleId = await this.linearClient.getActiveCycleId(teamId)
             ?? await this.linearClient.getNextCycleId(teamId);
         } else if (sprint.startDate && sprint.endDate) {
-          // Active or future sprint — find/create matching cycle
+          // Active or future sprint with dates — find/create matching cycle
           try {
             cycleId = await this.linearClient.resolveOrCreateCycle(
               teamId, sprint.name, sprint.startDate, sprint.endDate
@@ -76,6 +76,10 @@ export class IssueMapper {
             cycleId = await this.linearClient.getActiveCycleId(teamId)
               ?? await this.linearClient.getNextCycleId(teamId);
           }
+        } else {
+          // Active or future sprint but no dates in Jira — look up existing cycle by name in Linear
+          cycleId = await this.linearClient.resolveCycleByName(teamId, sprint.name)
+            ?? await this.linearClient.getNextCycleId(teamId);
         }
       }
     }
