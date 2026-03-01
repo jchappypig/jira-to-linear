@@ -121,6 +121,7 @@ export interface IssueTypeConfig {
 export interface AppConfig {
   jql?: string;
   teamMapping: Record<string, string>;
+  teamExtraLabels?: Record<string, string[]>; // jiraTeamName → workspace label names to always add
   issueTypeMapping: Record<string, IssueTypeConfig>;
   stateMigration?: Record<string, string>;
   defaultTeamId?: string;

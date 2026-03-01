@@ -95,6 +95,15 @@ export class IssueMapper {
       if (labelId) labelIds.push(labelId);
     }
 
+    // Apply any extra labels configured per Jira team name
+    const jiraTeamName = fields.customfield_10001?.name;
+    if (jiraTeamName && this.config.teamExtraLabels?.[jiraTeamName]) {
+      for (const labelName of this.config.teamExtraLabels[jiraTeamName]) {
+        const labelId = this.linearClient.resolveLabel(labelName);
+        if (labelId && !labelIds.includes(labelId)) labelIds.push(labelId);
+      }
+    }
+
     const parentJiraKey = resolveParentKey(jiraIssue);
     const jiraUrl = `${this.jiraBaseUrl.replace(/\/$/, "")}/browse/${key}`;
 
