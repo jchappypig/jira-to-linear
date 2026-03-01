@@ -47,29 +47,32 @@ export class IssueMapper {
     //   if that cycle is completed in Linear → fall back to active Linear cycle
     // - No sprint → no cycle
     let cycleId: string | undefined;
-    let cycleIsActive = false;
-    const activeCycleId = await this.linearClient.getActiveCycleId(teamId);
+    let sprintState: "active" | "future" | "closed" | undefined;
     const sprints = fields.customfield_10020;
     const isDone = ["Done", "Closed", "Resolved", "Released"].includes(fields.status.name);
     if (sprints && sprints.length > 0) {
       const sprint = sprints[sprints.length - 1];
+      sprintState = sprint.state;
       if (sprint.state === "closed") {
         if (isDone) {
           return { ...({} as MappedIssue), skipMigration: true };
         }
-        cycleId = activeCycleId ?? await this.linearClient.getNextCycleId(teamId);
+        // Not done in a closed sprint — carry forward to active cycle
+        cycleId = await this.linearClient.getActiveCycleId(teamId)
+          ?? await this.linearClient.getNextCycleId(teamId);
       } else if (sprint.startDate && sprint.endDate) {
+        // Active or future sprint — find/create matching cycle
         try {
           cycleId = await this.linearClient.resolveOrCreateCycle(
             teamId, sprint.name, sprint.startDate, sprint.endDate
           );
         } catch (err) {
           console.warn(`WARN: Sprint "${sprint.name}" cycle completed in Linear, moving to active cycle`);
-          cycleId = activeCycleId ?? await this.linearClient.getNextCycleId(teamId);
+          cycleId = await this.linearClient.getActiveCycleId(teamId)
+            ?? await this.linearClient.getNextCycleId(teamId);
         }
       }
     }
-    cycleIsActive = !!cycleId && cycleId === activeCycleId;
 
     const priority = PRIORITY_MAP[fields.priority?.name ?? ""] ?? 3;
 
@@ -112,7 +115,7 @@ export class IssueMapper {
       assigneeId,
       subscriberIds,
       cycleId,
-      cycleIsActive,
+      sprintState,
       estimate,
       priority,
       parentJiraKey,

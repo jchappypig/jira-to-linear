@@ -9,3 +9,10 @@ config.json
 *.jpeg
 *.gif
 *.webp
+
+# One-off debug/utility scripts
+check-*.js
+fix-*.js
+cleanup-*.js
+debug-*.js
+remigrate.js

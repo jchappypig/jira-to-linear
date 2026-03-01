@@ -176,8 +176,9 @@ async function runMigration(opts: CliOptions): Promise<void> {
 
       // Backlog + active cycle → Todo; Backlog + future/no cycle → Backlog; any other status → as-is.
       const mappedStateName = config.stateMigration?.[mapped.jiraStatusName] ?? mapped.jiraStatusName;
+      // Linear silently drops cycleId for Backlog-state issues — promote to Todo whenever a cycle is assigned
       const effectiveStateName =
-        mappedStateName === "Backlog" ? (mapped.cycleIsActive ? "Todo" : "Backlog") : mappedStateName;
+        mappedStateName === "Backlog" && mapped.cycleId ? "Todo" : mappedStateName;
       const stateId = linearClient.resolveStateId(effectiveStateName, teamId);
 
       if (opts.dryRun) {
