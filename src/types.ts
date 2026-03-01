@@ -188,3 +188,11 @@ export interface BackfillOptions {
   dryRun: boolean;
   verbose: boolean;
 }
+
+export interface BackfillAttachmentsOptions {
+  configPath: string;
+  statePath: string;
+  jiraKeys?: string[];  // if set, only backfill these keys; otherwise all in state
+  dryRun: boolean;
+  verbose: boolean;
+}

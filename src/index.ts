@@ -4,7 +4,7 @@ import "dotenv/config";
 import { program } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { AppConfig, BackfillOptions, CliOptions, JiraIssue, MigrationState } from "./types";
+import { AppConfig, BackfillAttachmentsOptions, BackfillOptions, CliOptions, JiraIssue, MigrationState } from "./types";
 import { convertAdfToMarkdown } from "./adf-to-markdown";
 import { JiraClient } from "./jira";
 import { LinearMigrationClient } from "./linear";
@@ -321,6 +321,23 @@ async function runMigration(opts: CliOptions): Promise<void> {
       await linearClient.createComment(created.id, commentBody);
       await sleep(rateLimitMs);
 
+      // Attach linked GitHub PRs (with source branch as subtitle)
+      const prs = await jiraClient.fetchPullRequests(jiraIssue.id);
+      for (const pr of prs) {
+        const subtitle = pr.sourceBranch
+          ? `${pr.sourceBranch} → ${pr.status}`
+          : pr.status;
+        await linearClient.createAttachment({
+          issueId: created.id,
+          title: pr.name,
+          subtitle,
+          url: pr.url,
+          iconUrl: "https://github.githubassets.com/favicons/favicon.svg",
+        });
+        if (opts.verbose) console.log(`  ATTACHMENT: ${pr.id} ${pr.name}`);
+        await sleep(rateLimitMs);
+      }
+
       // Migrate existing Jira comments
       const jiraComments = jiraIssue.fields.comment?.comments ?? [];
       for (const jiraComment of jiraComments) {
@@ -496,6 +513,92 @@ async function runBackfill(opts: BackfillOptions): Promise<void> {
   console.log(`  Failed                : ${failed}`);
 }
 
+// ── Backfill attachments orchestrator ─────────────────────────────────────
+
+async function runBackfillAttachments(opts: BackfillAttachmentsOptions): Promise<void> {
+  const state = loadState(opts.statePath);
+
+  const jiraBaseUrl = process.env.JIRA_BASE_URL;
+  const jiraEmail = process.env.JIRA_EMAIL;
+  const jiraToken = process.env.JIRA_API_TOKEN;
+  const linearKey = process.env.LINEAR_API_KEY;
+
+  if (!jiraBaseUrl || !jiraEmail || !jiraToken || !linearKey) {
+    throw new Error(
+      "Missing env vars. Ensure JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, and LINEAR_API_KEY are set in your .env file."
+    );
+  }
+
+  const jiraClient = new JiraClient(jiraBaseUrl, jiraEmail, jiraToken);
+  const linearClient = new LinearMigrationClient(linearKey);
+
+  const viewer = await linearClient.getViewer();
+  console.log(`Connected to Linear as: ${viewer.name} (${viewer.email})`);
+
+  // Determine which jira keys to process
+  const keys = opts.jiraKeys?.length
+    ? opts.jiraKeys.filter((k) => state.jiraKeyToLinearId[k])
+    : Object.keys(state.jiraKeyToLinearId);
+
+  console.log(`Processing ${keys.length} issues...`);
+
+  const rateLimitMs = 300;
+  let updated = 0;
+  let skippedNoPrs = 0;
+  let failed = 0;
+
+  for (const jiraKey of keys) {
+    const linearId = state.jiraKeyToLinearId[jiraKey];
+    const identifier = state.jiraKeyToLinearIdentifier[jiraKey];
+
+    try {
+      // Fetch the numeric Jira issue ID needed for dev-status API
+      const jiraIssue = await jiraClient.fetchIssueByKey(jiraKey);
+      const prs = await jiraClient.fetchPullRequests(jiraIssue.id);
+
+      if (prs.length === 0) {
+        if (opts.verbose) console.log(`SKIP (no PRs): ${identifier} ← ${jiraKey}`);
+        skippedNoPrs++;
+        continue;
+      }
+
+      if (opts.dryRun) {
+        console.log(`[DRY RUN] ${identifier} ← ${jiraKey}: would attach ${prs.length} PR(s)`);
+        for (const pr of prs) {
+          console.log(`  ${pr.id} ${pr.name} [${pr.status}]`);
+        }
+        updated++;
+        continue;
+      }
+
+      for (const pr of prs) {
+        const subtitle = pr.sourceBranch
+          ? `${pr.sourceBranch} → ${pr.status}`
+          : pr.status;
+        await linearClient.createAttachment({
+          issueId: linearId,
+          title: pr.name,
+          subtitle,
+          url: pr.url,
+          iconUrl: "https://github.githubassets.com/favicons/favicon.svg",
+        });
+        await sleep(rateLimitMs);
+      }
+      console.log(`UPDATED: ${identifier} ← ${jiraKey}: attached ${prs.length} PR(s)`);
+      updated++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`ERROR: ${jiraKey}: ${msg}`);
+      failed++;
+    }
+  }
+
+  console.log("\n=== Backfill attachments complete ===");
+  console.log(`  Updated          : ${updated}`);
+  console.log(`  Skipped (no PRs) : ${skippedNoPrs}`);
+  console.log(`  Failed           : ${failed}`);
+}
+
 // ── CLI definition ─────────────────────────────────────────────────────────
 
 program
@@ -536,6 +639,29 @@ program
     try {
       await runBackfill({
         teamName: options.team as string,
+        configPath: options.config as string,
+        statePath: options.state as string,
+        dryRun: options.dryRun as boolean,
+        verbose: options.verbose as boolean,
+      });
+    } catch (err) {
+      console.error("Fatal:", err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("backfill-attachments")
+  .description("Attach GitHub PRs to already-migrated Linear issues")
+  .option("-k, --keys <keys>", "Comma-separated Jira keys to backfill (default: all in state)")
+  .option("-c, --config <path>", "Path to config.json", "config.json")
+  .option("-s, --state <path>", "Path to migration state file", "migration-state.json")
+  .option("-d, --dry-run", "Preview without making changes", false)
+  .option("-v, --verbose", "Print detailed logs", false)
+  .action(async (options: Record<string, unknown>) => {
+    try {
+      await runBackfillAttachments({
+        jiraKeys: options.keys ? (options.keys as string).split(",").map((k) => k.trim()) : undefined,
         configPath: options.config as string,
         statePath: options.state as string,
         dryRun: options.dryRun as boolean,

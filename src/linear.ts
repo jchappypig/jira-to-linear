@@ -313,6 +313,20 @@ export class LinearMigrationClient {
     return parent?.id;
   }
 
+  /** Create an attachment (e.g. GitHub PR link) on a Linear issue */
+  async createAttachment(input: {
+    issueId: string;
+    title: string;
+    subtitle?: string;
+    url: string;
+    iconUrl?: string;
+  }): Promise<void> {
+    const payload = await this.client.createAttachment(input);
+    if (!payload.success) {
+      throw new Error(`Failed to create attachment "${input.title}" on issue ${input.issueId}`);
+    }
+  }
+
   /** Update a Linear issue (e.g. set assigneeId) */
   async updateIssue(id: string, input: { assigneeId?: string; parentId?: string }): Promise<void> {
     await this.client.updateIssue(id, input);

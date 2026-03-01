@@ -26,8 +26,18 @@ const JIRA_FIELDS = [
   "updated",
 ];
 
+export interface JiraPullRequest {
+  id: string;         // e.g. "#4363"
+  name: string;       // PR title
+  url: string;        // GitHub PR URL
+  status: string;     // OPEN | MERGED | DECLINED
+  sourceBranch: string;
+  repositoryName: string;
+}
+
 export class JiraClient {
   private readonly http: AxiosInstance;
+  private readonly devHttp: AxiosInstance;
 
   constructor(
     private readonly baseUrl: string,
@@ -35,13 +45,19 @@ export class JiraClient {
     apiToken: string
   ) {
     const auth = Buffer.from(`${email}:${apiToken}`).toString("base64");
+    const headers = {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    };
     this.http = axios.create({
       baseURL: `${baseUrl.replace(/\/$/, "")}/rest/api/3`,
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
+      headers,
+      timeout: 30_000,
+    });
+    this.devHttp = axios.create({
+      baseURL: `${baseUrl.replace(/\/$/, "")}/rest/dev-status/1.0`,
+      headers,
       timeout: 30_000,
     });
   }
@@ -149,6 +165,35 @@ export class JiraClient {
     }
 
     return collected;
+  }
+
+  /**
+   * Fetch pull requests linked to a Jira issue via the dev-status API.
+   * Returns an empty array if no PRs are found or the API is unavailable.
+   */
+  async fetchPullRequests(issueId: string): Promise<JiraPullRequest[]> {
+    try {
+      const res = await this.devHttp.get<{
+        detail: Array<{ pullRequests: Array<{
+          id: string; name: string; url: string; status: string;
+          source: { branch: string }; repositoryName: string;
+        }> }>
+      }>("/issue/detail", {
+        params: { issueId, applicationType: "GitHub", dataType: "pullrequest" },
+      });
+      return res.data.detail.flatMap((d) =>
+        d.pullRequests.map((pr) => ({
+          id: pr.id,
+          name: pr.name,
+          url: pr.url,
+          status: pr.status,
+          sourceBranch: pr.source?.branch ?? "",
+          repositoryName: pr.repositoryName,
+        }))
+      );
+    } catch {
+      return [];
+    }
   }
 
   /** Build the Jira browse URL for a given issue key */
