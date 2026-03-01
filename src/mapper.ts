@@ -99,7 +99,9 @@ export class IssueMapper {
     const jiraUrl = `${this.jiraBaseUrl.replace(/\/$/, "")}/browse/${key}`;
 
     // Story points: prefer next-gen field (10028), fall back to legacy (10016)
-    const estimate = fields.customfield_10028 ?? fields.customfield_10016 ?? undefined;
+    // Linear requires integer estimates — round any fractional values
+    const rawEstimate = fields.customfield_10028 ?? fields.customfield_10016 ?? undefined;
+    const estimate = rawEstimate !== undefined ? Math.round(rawEstimate) : undefined;
 
     // Jira "Flagged" field (customfield_10021) with value "Impediment" → Blocked in Linear
     const isBlocked = fields.customfield_10021?.some((f) => f.value === "Impediment") ?? false;

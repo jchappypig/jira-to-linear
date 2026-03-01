@@ -6,7 +6,7 @@ class LinearMigrationClient {
     client;
     // Caches to avoid redundant API calls
     teams = new Map(); // key: lowercased name
-    labels = new Map(); // key: "teamId:lowercasedName" or "ws:name"
+    labels = new Map(); // key: lowercased name
     users = new Map(); // key: lowercased email
     states = new Map(); // key: "teamId:lowercasedName"
     cycles = new Map(); // key: cycleName → cycleId (root team only)
@@ -34,6 +34,20 @@ class LinearMigrationClient {
             console.warn(`WARN: Root team "${rootTeamName}" not found — cycle creation will be skipped.`);
         }
     }
+    /** Load existing workspace-level labels into cache. Never creates labels. */
+    async loadLabels() {
+        const result = await this.client.issueLabels({ first: 250 });
+        for (const label of result.nodes) {
+            const labelTeam = await label.team;
+            if (!labelTeam) {
+                this.labels.set(label.name.toLowerCase(), { id: label.id, name: label.name });
+            }
+        }
+    }
+    /** Look up a workspace label by name. Returns undefined if not found. */
+    resolveLabel(name) {
+        return this.labels.get(name.toLowerCase())?.id;
+    }
     /**
      * Resolve a Jira project/team name to a Linear team ID.
      * Checks teamMapping config first, then falls back to direct name match.
@@ -41,48 +55,6 @@ class LinearMigrationClient {
     resolveTeamId(jiraProjectName, teamMapping) {
         const linearName = teamMapping[jiraProjectName] ?? jiraProjectName;
         return this.teams.get(linearName.toLowerCase())?.id;
-    }
-    /** Load all workspace labels and team-specific labels into cache */
-    async loadLabels(teamIds) {
-        // Workspace-level labels
-        const wsLabels = await this.client.issueLabels({ first: 250 });
-        for (const label of wsLabels.nodes) {
-            this.labels.set(`ws:${label.name.toLowerCase()}`, {
-                id: label.id,
-                name: label.name,
-                color: label.color,
-            });
-        }
-        // Team-specific labels
-        for (const teamId of teamIds) {
-            const team = await this.client.team(teamId);
-            const teamLabels = await team.labels({ first: 250 });
-            for (const label of teamLabels.nodes) {
-                this.labels.set(`${teamId}:${label.name.toLowerCase()}`, {
-                    id: label.id,
-                    name: label.name,
-                    color: label.color,
-                });
-            }
-        }
-    }
-    /**
-     * Find or create a label by name for a given team.
-     * Checks team-specific cache first, then workspace cache, then creates new.
-     */
-    async resolveOrCreateLabel(name, color, teamId) {
-        const teamKey = `${teamId}:${name.toLowerCase()}`;
-        const wsKey = `ws:${name.toLowerCase()}`;
-        const existing = this.labels.get(teamKey);
-        if (existing)
-            return existing.id;
-        const payload = await this.client.createIssueLabel({ name, color, teamId });
-        if (!payload.success || !payload.issueLabel) {
-            throw new Error(`Failed to create label "${name}"`);
-        }
-        const newLabel = await payload.issueLabel;
-        this.labels.set(teamKey, { id: newLabel.id, name: newLabel.name, color: newLabel.color });
-        return newLabel.id;
     }
     /** Load all workspace users into cache keyed by email */
     async loadUsers() {
@@ -201,6 +173,25 @@ class LinearMigrationClient {
         return activeCycle?.id;
     }
     /** Return the next upcoming cycle ID (soonest future start), or undefined if none. */
+    /** Look up an existing Linear cycle by sprint name (normalised). Returns undefined if not found. */
+    async resolveCycleByName(teamId, sprintName) {
+        const cycleName = LinearMigrationClient.normalizeCycleName(sprintName);
+        if (!cycleName)
+            return undefined;
+        const cacheKey = `${teamId}:${cycleName}`;
+        const cached = this.cycles.get(cacheKey);
+        if (cached)
+            return cached;
+        const team = await this.client.team(teamId);
+        const cycles = await team.cycles({ first: 250 });
+        for (const cycle of cycles.nodes) {
+            if (cycle.name?.toLowerCase() === cycleName.toLowerCase() && !cycle.completedAt) {
+                this.cycles.set(cacheKey, cycle.id);
+                return cycle.id;
+            }
+        }
+        return undefined;
+    }
     async getNextCycleId(teamId) {
         const team = await this.client.team(teamId);
         const cycles = await team.cycles({ first: 250 });
@@ -243,6 +234,19 @@ class LinearMigrationClient {
         const payload = await this.client.createComment({ issueId, body });
         if (!payload.success) {
             throw new Error(`Failed to add comment to issue ${issueId}`);
+        }
+    }
+    /** Fetch the current parent ID of a Linear issue, or undefined if none. */
+    async getIssueParentId(id) {
+        const issue = await this.client.issue(id);
+        const parent = await issue.parent;
+        return parent?.id;
+    }
+    /** Create an attachment (e.g. GitHub PR link) on a Linear issue */
+    async createAttachment(input) {
+        const payload = await this.client.createAttachment(input);
+        if (!payload.success) {
+            throw new Error(`Failed to create attachment "${input.title}" on issue ${input.issueId}`);
         }
     }
     /** Update a Linear issue (e.g. set assigneeId) */

@@ -24,6 +24,7 @@ const JIRA_FIELDS = [
     "customfield_10028", // Story Points (next-gen)
     "customfield_15000", // Reviewer
     "customfield_10020", // Sprint
+    "customfield_10021", // Flagged (Impediment)
     "labels",
     "created",
     "updated",
@@ -31,16 +32,23 @@ const JIRA_FIELDS = [
 class JiraClient {
     baseUrl;
     http;
+    devHttp;
     constructor(baseUrl, email, apiToken) {
         this.baseUrl = baseUrl;
         const auth = Buffer.from(`${email}:${apiToken}`).toString("base64");
+        const headers = {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+        };
         this.http = axios_1.default.create({
             baseURL: `${baseUrl.replace(/\/$/, "")}/rest/api/3`,
-            headers: {
-                Authorization: `Basic ${auth}`,
-                "Content-Type": "application/json",
-                Accept: "application/json",
-            },
+            headers,
+            timeout: 30_000,
+        });
+        this.devHttp = axios_1.default.create({
+            baseURL: `${baseUrl.replace(/\/$/, "")}/rest/dev-status/1.0`,
+            headers,
             timeout: 30_000,
         });
     }
@@ -78,7 +86,8 @@ class JiraClient {
     }
     /**
      * Recursively discover all related issues from a seed issue key using BFS.
-     * Follows parent/child relationships, Epic Links, and same-project issuelinks.
+     * Follows: parent/child relationships, Epic Links, and issuelinks within the same project.
+     * Excludes issuelinks pointing to other projects (e.g. MAP, IDEAS).
      * Uses a visited set to prevent cycles/deadlocks.
      */
     async expandIssueGraph(seedKey, verbose) {
@@ -104,12 +113,14 @@ class JiraClient {
             collected.push(issue);
             // Follow parent upward (same project only)
             const parentKey = issue.fields.parent?.key;
-            if (parentKey && parentKey.startsWith(`${projectKey}-`) && !visited.has(parentKey))
+            if (parentKey && parentKey.startsWith(`${projectKey}-`) && !visited.has(parentKey)) {
                 queue.push(parentKey);
+            }
             // Follow Epic Link upward (same project only)
             const epicLink = issue.fields.customfield_10014;
-            if (epicLink && epicLink.startsWith(`${projectKey}-`) && !visited.has(epicLink))
+            if (epicLink && epicLink.startsWith(`${projectKey}-`) && !visited.has(epicLink)) {
                 queue.push(epicLink);
+            }
             // Find children via parent = KEY
             const childrenByParent = await this.fetchIssues(`parent = ${key} ORDER BY created ASC`);
             for (const child of childrenByParent) {
@@ -125,11 +136,34 @@ class JiraClient {
             // Follow issuelinks within the same project only
             for (const link of issue.fields.issuelinks ?? []) {
                 const linkedKey = link.outwardIssue?.key ?? link.inwardIssue?.key;
-                if (linkedKey && linkedKey.startsWith(`${projectKey}-`) && !visited.has(linkedKey))
+                if (linkedKey && linkedKey.startsWith(`${projectKey}-`) && !visited.has(linkedKey)) {
                     queue.push(linkedKey);
+                }
             }
         }
         return collected;
+    }
+    /**
+     * Fetch pull requests linked to a Jira issue via the dev-status API.
+     * Returns an empty array if no PRs are found or the API is unavailable.
+     */
+    async fetchPullRequests(issueId) {
+        try {
+            const res = await this.devHttp.get("/issue/detail", {
+                params: { issueId, applicationType: "GitHub", dataType: "pullrequest" },
+            });
+            return res.data.detail.flatMap((d) => d.pullRequests.map((pr) => ({
+                id: pr.id,
+                name: pr.name,
+                url: pr.url,
+                status: pr.status,
+                sourceBranch: pr.source?.branch ?? "",
+                repositoryName: pr.repositoryName,
+            })));
+        }
+        catch {
+            return [];
+        }
     }
     /** Build the Jira browse URL for a given issue key */
     getIssueUrl(issueKey) {
