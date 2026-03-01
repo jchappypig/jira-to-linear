@@ -288,8 +288,15 @@ export class LinearMigrationClient {
     }
   }
 
+  /** Fetch the current parent ID of a Linear issue, or undefined if none. */
+  async getIssueParentId(id: string): Promise<string | undefined> {
+    const issue = await this.client.issue(id);
+    const parent = await issue.parent;
+    return parent?.id;
+  }
+
   /** Update a Linear issue (e.g. set assigneeId) */
-  async updateIssue(id: string, input: { assigneeId?: string }): Promise<void> {
+  async updateIssue(id: string, input: { assigneeId?: string; parentId?: string }): Promise<void> {
     await this.client.updateIssue(id, input);
   }
 

@@ -8,7 +8,7 @@ import { AppConfig, BackfillOptions, CliOptions, JiraIssue, MigrationState } fro
 import { convertAdfToMarkdown } from "./adf-to-markdown";
 import { JiraClient } from "./jira";
 import { LinearMigrationClient } from "./linear";
-import { IssueMapper, sortIssuesByHierarchy } from "./mapper";
+import { IssueMapper, resolveParentKey as resolveParentKeyFromIssue, sortIssuesByHierarchy } from "./mapper";
 
 // ── Config / state helpers ─────────────────────────────────────────────────
 
@@ -198,9 +198,29 @@ async function runMigration(opts: CliOptions): Promise<void> {
   for (const jiraIssue of sorted) {
     const { key } = jiraIssue;
 
-    // Skip already-migrated issues
+    // Already migrated — sanity check parent linkage
     if (state.jiraKeyToLinearId[key]) {
-      if (opts.verbose) console.log(`SKIP (already migrated): ${key}`);
+      const linearId = state.jiraKeyToLinearId[key];
+      const identifier = state.jiraKeyToLinearIdentifier[key];
+      const parentJiraKey = resolveParentKeyFromIssue(jiraIssue);
+      const expectedParentId = parentJiraKey ? state.jiraKeyToLinearId[parentJiraKey] : undefined;
+
+      if (expectedParentId) {
+        const actualParentId = await linearClient.getIssueParentId(linearId);
+        if (actualParentId !== expectedParentId) {
+          if (!opts.dryRun) {
+            await linearClient.updateIssue(linearId, { parentId: expectedParentId });
+            console.log(`FIXED parent: ${identifier} ← ${parentJiraKey}`);
+          } else {
+            console.log(`[DRY RUN] ${identifier}: would fix parent → ${parentJiraKey}`);
+          }
+        } else if (opts.verbose) {
+          console.log(`OK (already migrated, parent correct): ${identifier}`);
+        }
+      } else if (opts.verbose) {
+        console.log(`SKIP (already migrated): ${identifier}`);
+      }
+
       skipped++;
       continue;
     }

@@ -188,7 +188,7 @@ export class IssueMapper {
  *
  * Epics themselves have no parent in this migration model.
  */
-function resolveParentKey(issue: JiraIssue): string | undefined {
+export function resolveParentKey(issue: JiraIssue): string | undefined {
   const { fields } = issue;
 
   if (fields.issuetype.name === "Epic") return undefined;
