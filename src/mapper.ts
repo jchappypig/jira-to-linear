@@ -81,28 +81,7 @@ export class IssueMapper {
     }
 
     const priority = PRIORITY_MAP[fields.priority?.name ?? ""] ?? 3;
-
-    // Resolve issue type → Linear label
-    const labelIds: string[] = [];
     const typeName = fields.issuetype.name;
-    const typeConfig = this.config.issueTypeMapping[typeName];
-
-    if (typeConfig) {
-      const labelId = await this.linearClient.resolveOrCreateLabel(
-        typeConfig.linearLabel,
-        typeConfig.labelColor,
-        teamId
-      );
-      labelIds.push(labelId);
-    }
-
-    // Add a "Jira:PROJECT" label for traceability
-    const projectLabelId = await this.linearClient.resolveOrCreateLabel(
-      `Jira:${fields.project.key}`,
-      "#6b7280",
-      teamId
-    );
-    labelIds.push(projectLabelId);
 
     const parentJiraKey = resolveParentKey(jiraIssue);
     const jiraUrl = `${this.jiraBaseUrl.replace(/\/$/, "")}/browse/${key}`;
@@ -120,7 +99,7 @@ export class IssueMapper {
       title: fields.summary,
       description,
       teamId,
-      labelIds,
+      labelIds: [],
       assigneeId,
       subscriberIds,
       cycleId,

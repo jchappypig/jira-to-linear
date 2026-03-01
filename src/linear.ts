@@ -6,12 +6,6 @@ export interface LinearTeamInfo {
   key: string;
 }
 
-export interface LinearLabelInfo {
-  id: string;
-  name: string;
-  color: string;
-}
-
 export interface LinearUserInfo {
   id: string;
   name: string;
@@ -36,7 +30,6 @@ export class LinearMigrationClient {
 
   // Caches to avoid redundant API calls
   private teams = new Map<string, LinearTeamInfo>();          // key: lowercased name
-  private labels = new Map<string, LinearLabelInfo>();        // key: "teamId:lowercasedName" or "ws:name"
   private users = new Map<string, LinearUserInfo>();          // key: lowercased email
   private states = new Map<string, LinearStateInfo>();        // key: "teamId:lowercasedName"
   private cycles = new Map<string, string>();                 // key: cycleName → cycleId (root team only)
@@ -78,57 +71,6 @@ export class LinearMigrationClient {
   ): string | undefined {
     const linearName = teamMapping[jiraProjectName] ?? jiraProjectName;
     return this.teams.get(linearName.toLowerCase())?.id;
-  }
-
-  /** Load all workspace labels and team-specific labels into cache */
-  async loadLabels(teamIds: string[]): Promise<void> {
-    // Workspace-level labels
-    const wsLabels = await this.client.issueLabels({ first: 250 });
-    for (const label of wsLabels.nodes) {
-      this.labels.set(`ws:${label.name.toLowerCase()}`, {
-        id: label.id,
-        name: label.name,
-        color: label.color,
-      });
-    }
-
-    // Team-specific labels
-    for (const teamId of teamIds) {
-      const team = await this.client.team(teamId);
-      const teamLabels = await team.labels({ first: 250 });
-      for (const label of teamLabels.nodes) {
-        this.labels.set(`${teamId}:${label.name.toLowerCase()}`, {
-          id: label.id,
-          name: label.name,
-          color: label.color,
-        });
-      }
-    }
-  }
-
-  /**
-   * Find or create a label by name for a given team.
-   * Checks team-specific cache first, then workspace cache, then creates new.
-   */
-  async resolveOrCreateLabel(
-    name: string,
-    color: string,
-    teamId: string
-  ): Promise<string> {
-    const teamKey = `${teamId}:${name.toLowerCase()}`;
-    const wsKey = `ws:${name.toLowerCase()}`;
-
-    const existing = this.labels.get(teamKey);
-    if (existing) return existing.id;
-
-    const payload = await this.client.createIssueLabel({ name, color, teamId });
-    if (!payload.success || !payload.issueLabel) {
-      throw new Error(`Failed to create label "${name}"`);
-    }
-
-    const newLabel = await payload.issueLabel;
-    this.labels.set(teamKey, { id: newLabel.id, name: newLabel.name, color: newLabel.color });
-    return newLabel.id;
   }
 
   /** Load all workspace users into cache keyed by email */

@@ -92,7 +92,7 @@ async function runMigration(opts: CliOptions): Promise<void> {
   // Sort so parents (epics) come before children
   const sorted = sortIssuesByHierarchy(jiraIssues);
 
-  // Collect all target Linear team IDs for label/state pre-loading
+  // Collect all target Linear team IDs for state pre-loading
   const teamIds = new Set<string>();
   for (const issue of sorted) {
     const jiraTeamName =
@@ -111,7 +111,6 @@ async function runMigration(opts: CliOptions): Promise<void> {
     );
   }
 
-  await linearClient.loadLabels([...teamIds]);
   await linearClient.loadWorkflowStates([...teamIds]);
 
   const mapper = new IssueMapper(config, linearClient, jiraBaseUrl);
