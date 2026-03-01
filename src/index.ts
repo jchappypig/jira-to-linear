@@ -174,11 +174,15 @@ async function runMigration(opts: CliOptions): Promise<void> {
         }
       }
 
-      // Backlog + active cycle → Todo; Backlog + future/no cycle → Backlog; any other status → as-is.
+      // Jira flagged (Impediment) → always Blocked in Linear, regardless of Jira status
+      // Backlog + cycle assigned → Todo (Linear drops cycleId for Backlog-state issues)
+      // All other statuses respected as-is
       const mappedStateName = config.stateMigration?.[mapped.jiraStatusName] ?? mapped.jiraStatusName;
-      // Linear silently drops cycleId for Backlog-state issues — promote to Todo whenever a cycle is assigned
-      const effectiveStateName =
-        mappedStateName === "Backlog" && mapped.cycleId ? "Todo" : mappedStateName;
+      const effectiveStateName = mapped.isBlocked
+        ? "Blocked"
+        : mappedStateName === "Backlog" && mapped.cycleId
+        ? "Todo"
+        : mappedStateName;
       const stateId = linearClient.resolveStateId(effectiveStateName, teamId);
 
       if (opts.dryRun) {

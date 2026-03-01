@@ -102,6 +102,18 @@ function preprocessAdf(node: AdfNode): AdfNode {
         };
       }
 
+      case "taskList": {
+        const items = (child.content ?? []).map((item): AdfNode => {
+          const checked = item.attrs?.state === "DONE";
+          const text = extractPlainText(item);
+          return {
+            type: "paragraph",
+            content: [{ type: "text", text: `- [${checked ? "x" : " "}] ${text}` }],
+          };
+        });
+        return { type: "doc", content: items };
+      }
+
       case "inlineCard":
       case "blockCard": {
         const url = (child.attrs?.url as string) ?? "";

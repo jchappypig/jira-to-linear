@@ -104,6 +104,9 @@ export class IssueMapper {
     // Story points: prefer next-gen field (10028), fall back to legacy (10016)
     const estimate = fields.customfield_10028 ?? fields.customfield_10016 ?? undefined;
 
+    // Jira "Flagged" field (customfield_10021) with value "Impediment" → Blocked in Linear
+    const isBlocked = fields.customfield_10021?.some((f) => f.value === "Impediment") ?? false;
+
     return {
       jiraKey: key,
       jiraId: id,
@@ -116,6 +119,7 @@ export class IssueMapper {
       subscriberIds,
       cycleId,
       sprintState,
+      isBlocked,
       estimate,
       priority,
       parentJiraKey,

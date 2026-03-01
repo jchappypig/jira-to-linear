@@ -20,6 +20,7 @@ const JIRA_FIELDS = [
   "customfield_10028", // Story Points (next-gen)
   "customfield_15000", // Reviewer
   "customfield_10020", // Sprint
+  "customfield_10021", // Flagged (Impediment)
   "labels",
   "created",
   "updated",

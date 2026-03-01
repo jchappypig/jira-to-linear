@@ -89,6 +89,7 @@ export interface JiraIssueFields {
   customfield_10028?: number | null; // Story Points (next-gen)
   customfield_15000?: JiraUser[] | null; // Reviewer
   customfield_10020?: JiraSprint[] | null; // Sprint
+  customfield_10021?: Array<{ value: string }> | null; // Flagged (Impediment)
   labels?: string[];
   created: string;
   updated: string;
@@ -155,6 +156,7 @@ export interface MappedIssue {
   subscriberIds: string[];
   cycleId?: string;
   sprintState?: "active" | "future" | "closed";
+  isBlocked?: boolean;
   estimate?: number;
   priority: 0 | 1 | 2 | 3 | 4;
   parentJiraKey?: string;
