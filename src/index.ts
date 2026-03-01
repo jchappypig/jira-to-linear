@@ -4,7 +4,7 @@ import "dotenv/config";
 import { program } from "commander";
 import * as fs from "fs";
 import * as path from "path";
-import { AppConfig, BackfillOptions, CliOptions, MigrationState } from "./types";
+import { AppConfig, BackfillOptions, CliOptions, JiraIssue, MigrationState } from "./types";
 import { convertAdfToMarkdown } from "./adf-to-markdown";
 import { JiraClient } from "./jira";
 import { LinearMigrationClient } from "./linear";
@@ -34,6 +34,75 @@ function saveState(statePath: string, state: MigrationState): void {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// ── Expand filter ─────────────────────────────────────────────────────────
+
+/**
+ * Filter issues discovered by --expand to only those worth migrating:
+ *   - Active sprint, future sprint, or Backlog (no sprint + not done)
+ *   - Not-done in a closed sprint (carry forward)
+ *   - Epics: included if at least one child qualifies under the above rules
+ *   - Excluded: done with no sprint, done in a closed sprint
+ */
+function filterIssuesForExpand(issues: JiraIssue[], verbose?: boolean): JiraIssue[] {
+  const isDone = (issue: JiraIssue) =>
+    ["Done", "Closed", "Resolved", "Released"].includes(issue.fields.status.name);
+
+  // Returns true if a non-epic issue qualifies for migration
+  function qualifies(issue: JiraIssue): boolean {
+    const sprints = issue.fields.customfield_10020;
+    const done = isDone(issue);
+
+    if (!sprints || sprints.length === 0) {
+      // Backlog: migrate only if not done
+      return !done;
+    }
+
+    const sprint = sprints[sprints.length - 1];
+    if (sprint.state === "active" || sprint.state === "future") return true;
+    // Closed sprint: skip if done, carry forward if not done
+    return !done;
+  }
+
+  // Build a set of keys that qualify (non-epics first)
+  const qualifiedKeys = new Set(
+    issues
+      .filter((i) => i.fields.issuetype.name !== "Epic" && qualifies(i))
+      .map((i) => i.key)
+  );
+
+  // Include epics whose at least one child (direct or via epicLink) qualifies
+  const epicKeys = new Set(
+    issues
+      .filter((i) => i.fields.issuetype.name === "Epic")
+      .map((i) => i.key)
+  );
+
+  for (const issue of issues) {
+    if (issue.fields.issuetype.name === "Epic") continue;
+    if (!qualifies(issue)) continue;
+    // Check all parent/epic links
+    const parentKey = issue.fields.parent?.key;
+    const epicLink = issue.fields.customfield_10014;
+    const epicField = issue.fields.epic?.key;
+    for (const ancestor of [parentKey, epicLink, epicField]) {
+      if (ancestor && epicKeys.has(ancestor)) qualifiedKeys.add(ancestor);
+    }
+  }
+
+  const filtered = issues.filter((i) => qualifiedKeys.has(i.key));
+
+  if (verbose) {
+    const skipped = issues.filter((i) => !qualifiedKeys.has(i.key));
+    for (const i of skipped) {
+      const sprint = i.fields.customfield_10020;
+      const sprintName = sprint?.length ? sprint[sprint.length - 1].name : "no sprint";
+      console.log(`  [filter] SKIP ${i.key} (${i.fields.status.name}, ${sprintName})`);
+    }
+  }
+
+  return filtered;
 }
 
 // ── Migration orchestrator ─────────────────────────────────────────────────
@@ -77,6 +146,8 @@ async function runMigration(opts: CliOptions): Promise<void> {
     console.log(`Expanding issue graph from seed: ${seedKey}`);
     jiraIssues = await jiraClient.expandIssueGraph(seedKey, opts.verbose);
     console.log(`Discovered ${jiraIssues.length} issues in the ${seedKey} graph`);
+    jiraIssues = filterIssuesForExpand(jiraIssues, opts.verbose);
+    console.log(`${jiraIssues.length} issues qualify after sprint filtering`);
   } else {
     const jql = opts.jql ?? config.jql!;
     console.log(`Fetching Jira issues with JQL: ${jql}`);
