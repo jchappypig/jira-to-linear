@@ -83,6 +83,14 @@ export class IssueMapper {
     const priority = PRIORITY_MAP[fields.priority?.name ?? ""] ?? 3;
     const typeName = fields.issuetype.name;
 
+    // Resolve issue type → existing workspace label (never create)
+    const labelIds: string[] = [];
+    const typeConfig = this.config.issueTypeMapping[typeName];
+    if (typeConfig) {
+      const labelId = this.linearClient.resolveLabel(typeConfig.linearLabel);
+      if (labelId) labelIds.push(labelId);
+    }
+
     const parentJiraKey = resolveParentKey(jiraIssue);
     const jiraUrl = `${this.jiraBaseUrl.replace(/\/$/, "")}/browse/${key}`;
 
@@ -99,7 +107,7 @@ export class IssueMapper {
       title: fields.summary,
       description,
       teamId,
-      labelIds: [],
+      labelIds,
       assigneeId,
       subscriberIds,
       cycleId,

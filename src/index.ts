@@ -111,6 +111,7 @@ async function runMigration(opts: CliOptions): Promise<void> {
     );
   }
 
+  await linearClient.loadLabels();
   await linearClient.loadWorkflowStates([...teamIds]);
 
   const mapper = new IssueMapper(config, linearClient, jiraBaseUrl);

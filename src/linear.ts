@@ -25,11 +25,17 @@ export interface CreatedIssue {
   url: string;
 }
 
+export interface LinearLabelInfo {
+  id: string;
+  name: string;
+}
+
 export class LinearMigrationClient {
   private readonly client: LinearClient;
 
   // Caches to avoid redundant API calls
   private teams = new Map<string, LinearTeamInfo>();          // key: lowercased name
+  private labels = new Map<string, LinearLabelInfo>();        // key: lowercased name
   private users = new Map<string, LinearUserInfo>();          // key: lowercased email
   private states = new Map<string, LinearStateInfo>();        // key: "teamId:lowercasedName"
   private cycles = new Map<string, string>();                 // key: cycleName → cycleId (root team only)
@@ -59,6 +65,22 @@ export class LinearMigrationClient {
     if (!this.rootTeamId) {
       console.warn(`WARN: Root team "${rootTeamName}" not found — cycle creation will be skipped.`);
     }
+  }
+
+  /** Load existing workspace-level labels into cache. Never creates labels. */
+  async loadLabels(): Promise<void> {
+    const result = await this.client.issueLabels({ first: 250 });
+    for (const label of result.nodes) {
+      const labelTeam = await label.team;
+      if (!labelTeam) {
+        this.labels.set(label.name.toLowerCase(), { id: label.id, name: label.name });
+      }
+    }
+  }
+
+  /** Look up a workspace label by name. Returns undefined if not found. */
+  resolveLabel(name: string): string | undefined {
+    return this.labels.get(name.toLowerCase())?.id;
   }
 
   /**
