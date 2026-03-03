@@ -128,6 +128,7 @@ export interface AppConfig {
   defaultTeamName?: string;
   batchSize?: number;
   rateLimitDelayMs?: number;
+  skipSprintFilter?: boolean; // bypass sprint/backlog filtering (e.g. for projects with no sprints)
 }
 
 // ============================================================

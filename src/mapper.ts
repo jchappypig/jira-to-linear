@@ -59,7 +59,7 @@ export class IssueMapper {
         const sprint = sprints[sprints.length - 1];
         sprintState = sprint.state;
         if (sprint.state === "closed") {
-          if (isDone) {
+          if (isDone && !this.config.skipSprintFilter) {
             return { ...({} as MappedIssue), skipMigration: true };
           }
           // Not done in a closed sprint — carry forward to active cycle
