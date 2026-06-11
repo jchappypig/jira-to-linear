@@ -2,7 +2,10 @@ node_modules/
 dist/
 .env
 migration-state.json
+migration-state-*.json
 config.json
+config-*.json
+.idea/
 *.js.map
 *.png
 *.jpg

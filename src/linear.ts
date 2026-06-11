@@ -83,6 +83,25 @@ export class LinearMigrationClient {
     return this.labels.get(name.toLowerCase())?.id;
   }
 
+  /** Create a workspace-level label and add it to the cache. */
+  async createLabel(name: string, color?: string): Promise<string> {
+    const payload = await this.client.createIssueLabel({ name, color });
+    if (!payload.success || !payload.issueLabel) {
+      throw new Error(`Failed to create label "${name}"`);
+    }
+    const label = await payload.issueLabel;
+    if (!label) throw new Error(`createLabel returned null for "${name}"`);
+    this.labels.set(name.toLowerCase(), { id: label.id, name: label.name });
+    return label.id;
+  }
+
+  /** Resolve a label by name, creating it if it doesn't exist. */
+  async resolveOrCreateLabel(name: string, color?: string): Promise<string> {
+    const existing = this.resolveLabel(name);
+    if (existing) return existing;
+    return this.createLabel(name, color);
+  }
+
   /**
    * Resolve a Jira project/team name to a Linear team ID.
    * Checks teamMapping config first, then falls back to direct name match.

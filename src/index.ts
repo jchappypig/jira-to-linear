@@ -269,8 +269,11 @@ async function runMigration(opts: CliOptions): Promise<void> {
       // Backlog + cycle assigned → Todo (Linear drops cycleId for Backlog-state issues)
       // All other statuses respected as-is
       const mappedStateName = config.stateMigration?.[mapped.jiraStatusName] ?? mapped.jiraStatusName;
+      const noSprint = !jiraIssue.fields.customfield_10020?.length;
       const effectiveStateName = mapped.isBlocked
         ? "Blocked"
+        : config.supportTicket?.noSprintState && noSprint
+        ? config.supportTicket.noSprintState
         : mappedStateName === "Backlog" && mapped.cycleId
         ? "Todo"
         : mappedStateName;

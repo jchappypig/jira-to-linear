@@ -90,6 +90,8 @@ export interface JiraIssueFields {
   customfield_15000?: JiraUser[] | null; // Reviewer
   customfield_10020?: JiraSprint[] | null; // Sprint
   customfield_10021?: Array<{ value: string }> | null; // Flagged (Impediment)
+  customfield_10002?: Array<{ name: string }> | null; // Organizations (JSM)
+  customfield_10033?: JiraUser[] | null; // Participants (JSM)
   labels?: string[];
   created: string;
   updated: string;
@@ -118,6 +120,22 @@ export interface IssueTypeConfig {
   labelColor: string;
 }
 
+export interface SupportTicketConfig {
+  // Always add these label names to every migrated support ticket
+  alwaysLabels?: string[];
+  // Map issuetype.name → Linear label name
+  issueTypeToLabel?: Record<string, string>;
+  // Map Jira label names → Linear label names (for labels like "Feature request")
+  jiraLabelToLabel?: Record<string, string>;
+  // Use participants (customfield_10033) as assignee; skip participants with these display names
+  participantsAsAssignee?: boolean;
+  skipParticipantNames?: string[];
+  // Use organizations (customfield_10002) as labels
+  organizationsAsLabels?: boolean;
+  // Linear state name to use when the issue has no sprint
+  noSprintState?: string;
+}
+
 export interface AppConfig {
   jql?: string;
   teamMapping: Record<string, string>;
@@ -129,6 +147,7 @@ export interface AppConfig {
   batchSize?: number;
   rateLimitDelayMs?: number;
   skipSprintFilter?: boolean; // bypass sprint/backlog filtering (e.g. for projects with no sprints)
+  supportTicket?: SupportTicketConfig;
 }
 
 // ============================================================

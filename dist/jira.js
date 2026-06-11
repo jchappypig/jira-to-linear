@@ -25,6 +25,8 @@ const JIRA_FIELDS = [
     "customfield_15000", // Reviewer
     "customfield_10020", // Sprint
     "customfield_10021", // Flagged (Impediment)
+    "customfield_10002", // Organizations (JSM)
+    "customfield_10033", // Participants (JSM)
     "labels",
     "created",
     "updated",

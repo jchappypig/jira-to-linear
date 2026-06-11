@@ -104,6 +104,54 @@ export class IssueMapper {
       }
     }
 
+    // Support ticket special mappings
+    const support = this.config.supportTicket;
+    if (support) {
+      // Always-add labels (e.g. "Support") — create if missing
+      for (const labelName of support.alwaysLabels ?? []) {
+        const labelId = await this.linearClient.resolveOrCreateLabel(labelName);
+        if (!labelIds.includes(labelId)) labelIds.push(labelId);
+      }
+
+      // issuetype.name → label — create if missing
+      if (support.issueTypeToLabel?.[typeName]) {
+        const labelId = await this.linearClient.resolveOrCreateLabel(support.issueTypeToLabel[typeName]);
+        if (!labelIds.includes(labelId)) labelIds.push(labelId);
+      }
+
+      // Jira label names → Linear label names — create if missing
+      for (const jiraLabel of fields.labels ?? []) {
+        const mapped = support.jiraLabelToLabel?.[jiraLabel];
+        if (mapped) {
+          const labelId = await this.linearClient.resolveOrCreateLabel(mapped);
+          if (!labelIds.includes(labelId)) labelIds.push(labelId);
+        }
+      }
+
+      // Organizations → labels — create if missing
+      if (support.organizationsAsLabels) {
+        for (const org of fields.customfield_10002 ?? []) {
+          const labelId = await this.linearClient.resolveOrCreateLabel(org.name);
+          if (!labelIds.includes(labelId)) labelIds.push(labelId);
+        }
+      }
+
+      // Participants → assignee (first resolvable participant, skipping ignored names)
+      if (support.participantsAsAssignee && !assigneeId) {
+        const skipNames = support.skipParticipantNames ?? [];
+        for (const participant of fields.customfield_10033 ?? []) {
+          if (skipNames.includes(participant.displayName)) continue;
+          if (participant.emailAddress) {
+            const userId = this.linearClient.resolveUserByEmail(participant.emailAddress);
+            if (userId) {
+              assigneeId = userId;
+              break;
+            }
+          }
+        }
+      }
+    }
+
     const parentJiraKey = resolveParentKey(jiraIssue);
     const jiraUrl = `${this.jiraBaseUrl.replace(/\/$/, "")}/browse/${key}`;
 
